@@ -148,14 +148,47 @@ private card header in BL33 and the miniport. Direct retained-memory sleep/wake
 is still under development. DDR200 is a separate extension; see the
 [long-term goal](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/PORTING.md#windows-ddr200-goal).
 
-The opt-in `NV_T214_DDR200=1` development build currently observes completed
-SCR/CMD6 reads and records `Ddr200CardInfo` / `Ddr200Capable`. Its capability
-gate, nonwrapping sampling-window selector (minimum eight taps), and CAR
-divider calculation pass `python3 drivers/Tegra210Sdhc/tests/test-ddr200.py`
-with address/undefined-behavior sanitizers. Hidden/visible ARM64 builds pass.
-**This is capability groundwork, not working DDR200:** vendor-mode switching,
-physical manual tuning and verified SDR104 recovery are not connected yet.
-The installed 0.4.2.1 package still uses SDR104 and does not enable this option.
+### T214 DDR200 candidate (0.5.0.0)
+
+Build with `NV_T210_LITE_WINARM_WRITE=1`, `NV_T214_SDR104=1` and
+`NV_T214_DDR200=1`. The normal build keeps the extension disabled. Use the
+same private visible/hidden partition header as BL33.
+
+The candidate follows Switchroot's SD 6.x SCR and CMD6 vendor-function-14
+detection. At a quiesced SDPORT tuning callback it first verifies SDR104,
+selects SDR12 access mode, switches CMD6 group 2 to 14, and sets the host to
+DDR50 with a 399.36 MHz module clock / 199.68 MHz card clock. It scans 128
+manual taps, requires a contiguous window of at least eight, selects its
+midpoint and compares four readbacks of the WINARM boot sector against the
+SDR104 copy before admitting normal I/O. It does not implement HS400 DLL
+synchronization or assume support from a card's brand.
+
+Unsupported cards remain in SDR104. A failed transition, narrow window,
+timeout or readback mismatch triggers one power-cycle/reinitialization to
+SDR104, including tuning and volume-identity checks. The private path issues
+no storage writes. It must preserve the card's CID and SDPORT-owned RCA;
+otherwise it returns failure and blocks ordinary data I/O until a fresh
+SDPORT enumeration, rather than pretending that recovery succeeded. Physical
+fallback behavior, including any RCA change, still requires a Lite test.
+
+Existing bounded registry diagnostics gain `Ddr200CardInfo`, `Ddr200Capable`,
+`Ddr200Active`, `Ddr200Status`, `Ddr200RecoveryStatus`, `Ddr200Fallbacks`,
+`Ddr200Window` and `Ddr200Tap`. Card-info bits 1/2/4 mean completed SCR/CMD6/CID
+observations; the first two can be absent after reinitialization until SDPORT
+reads them again. SDPORT's logical `BusSpeed=7` remains SDR104; use
+`Ddr200Active` with the clock/tuning evidence to identify the private mode.
+
+Host sanitizer tests cover capability parsing, seven/eight-tap boundaries,
+clock limits, actual mode-transition code, timeouts, corrupted readbacks,
+CID/RCA mismatch and both partition views. ARM64 builds pass. These are
+**code/build results, not physical DDR200 acceptance or a throughput claim**.
+SC7 and repeated retained-memory wake remain separate unfinished work.
+
+```sh
+python3 drivers/Tegra210Sdhc/tests/test-ddr200.py
+python3 drivers/Tegra210Sdhc/tests/test-ddr200-transport.py
+python3 drivers/Tegra210Sdhc/tests/test-diagnostics.py
+```
 
 References: [Microsoft SD miniport](https://github.com/microsoft/Windows-driver-samples/tree/main/sd/miniport/sdhc)
 and [Switchroot SDHCI transfer limits](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/linux-5.1.2/drivers/mmc/host/sdhci.c).

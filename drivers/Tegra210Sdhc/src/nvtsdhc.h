@@ -1410,6 +1410,9 @@ typedef struct _SDHC_EXTENSION {
 #if NV_T214_DDR200
     UCHAR T214Scr[8], T214SwitchStatus[64], T214Cid[16];
     ULONG T214CardInfoValid, T214Rca;
+    BOOLEAN T214DdrAttempted, T214DdrActive, T214DdrFatal, T214DdrRecoverNeeded;
+    ULONG T214DdrStatus, T214DdrRecoveryStatus, T214DdrFallbacks;
+    ULONG T214DdrWindow, T214DdrTap, T214DdrClockKhz;
 #endif
 #endif
 #if NV_T210_LITE_WINARM_WRITE

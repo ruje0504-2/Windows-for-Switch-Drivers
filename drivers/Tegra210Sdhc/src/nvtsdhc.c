@@ -335,7 +335,7 @@ static NV_DIAG NvDiag = { .LastErrorCommand = 0xFF };
 #include "t214_sdmmc.h"
 #endif
 #if NV_T214_DDR200
-#include "t214_ddr200_policy.h"
+#include "t214_ddr200.h"
 
 /* Observe only completed single-block metadata reads already issued by
  * SDPORT. Do not infer capability from a card name or send private commands
@@ -527,6 +527,12 @@ NvDiagSaveClock(
     NvDiagCapture( L"Ddr200Capable", (SdhcExtension->T214CardInfoValid & 3) == 3 &&
                    T214Ddr200Supported(SdhcExtension->T214Scr,
                                        SdhcExtension->T214SwitchStatus));
+    NvDiagCapture( L"Ddr200Active", SdhcExtension->T214DdrActive);
+    NvDiagCapture( L"Ddr200Status", SdhcExtension->T214DdrStatus);
+    NvDiagCapture( L"Ddr200RecoveryStatus", SdhcExtension->T214DdrRecoveryStatus);
+    NvDiagCapture( L"Ddr200Fallbacks", SdhcExtension->T214DdrFallbacks);
+    NvDiagCapture( L"Ddr200Window", SdhcExtension->T214DdrWindow);
+    NvDiagCapture( L"Ddr200Tap", SdhcExtension->T214DdrTap);
 #endif
 #endif
 #if NV_T210_LITE_WINARM_WRITE
@@ -1262,6 +1268,19 @@ Return value:
 
     Status = STATUS_INVALID_PARAMETER;
     SdhcExtension = (PSDHC_EXTENSION) PrivateExtension;
+#if NV_T214_DDR200
+    if (SdhcExtension->T214DdrRecoverNeeded &&
+        (BusOperation->Type == SdResetHost || BusOperation->Type == SdExecuteTuning)) {
+        Status = T214DdrRecover(SdhcExtension);
+#if NV_DIAG_CLOCK
+        NvDiagSaveClock(SdhcExtension);
+#endif
+        /* Recovery already reset the host, re-enumerated the card and
+         * re-tuned SDR104. A second reset would discard its verified state.
+         */
+        return Status;
+    }
+#endif
     switch (BusOperation->Type) {
     case SdResetHost:
         Status = SdhcResetHost(SdhcExtension,
@@ -1556,6 +1575,12 @@ Return value:
     NTSTATUS Status;
 
     SdhcExtension = (PSDHC_EXTENSION) PrivateExtension;
+#if NV_T214_DDR200
+    if (SdhcExtension->T214DdrFatal &&
+        (Request->Command.Index == 17 || Request->Command.Index == 18 ||
+         Request->Command.Index == 24 || Request->Command.Index == 25))
+        return STATUS_DEVICE_NOT_READY;
+#endif
 #if NV_T210_LITE_WINARM_WRITE
     if (!LiteAllowRequest(SdhcExtension, Request)) {
         NvDiag.DeniedCount += 1;
@@ -1783,6 +1808,13 @@ Return value:
     }
 #endif
     if (Errors) {
+#if NV_T214_DDR200
+        if (SdhcExtension->T214DdrActive) {
+            SdhcExtension->T214DdrStatus = SdhcConvertErrorToStatus((USHORT)Errors);
+            SdhcExtension->T214DdrRecoverNeeded = TRUE;
+            SdhcExtension->T214DdrFatal = TRUE;
+        }
+#endif
         NvDiag.LastErrorCommand = Request->Command.Index;
         NvDiag.LastErrorKind = NvDiagErrorKind(Errors);
         NvDiag.LastErrors = Errors;
@@ -2085,6 +2117,11 @@ Return value:
     UCHAR Retries;
     UCHAR Mask;
 
+#if NV_T214_DDR200
+    if (ResetType == SdResetTypeAll && SdhcExtension->T214DdrActive) {
+        return T214DdrRecover(SdhcExtension);
+    }
+#endif
 #if NV_T210_LITE_WINARM_WRITE
     SdhcExtension->AppPrefixAccepted = FALSE;
 #endif
@@ -2208,6 +2245,15 @@ Return value:
     USHORT Mask;
     UCHAR Retries;
     
+#if NV_T214_DDR200
+    if (SdhcExtension->T214DdrActive) {
+        NTSTATUS ddr = T214DdrClock(SdhcExtension, Frequency);
+#if NV_DIAG_CLOCK
+        NvDiagSaveClock(SdhcExtension);
+#endif
+        return ddr;
+    }
+#endif
 #if NV_T214_SDR104
     ULONG limit = (SdhcExtension->T214Voltage18 && SdhcExtension->SpeedMode == SdhcSpeedModeSDR104) ? 200000 : 50000;
     if (Frequency > limit) Frequency = limit;
@@ -2496,6 +2542,10 @@ Return value:
     NTSTATUS Status;
     USHORT UhsMode;
 
+#if NV_T214_DDR200
+    if (SdhcExtension->T214DdrActive)
+        return Speed == SdBusSpeedSDR104 ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
+#endif
     if (NV_T210_LITE_SLOT && !NV_T214_SDR104 && Speed != SdBusSpeedNormal) {
         return STATUS_NOT_SUPPORTED;
     }
@@ -2807,7 +2857,11 @@ Return value:
     SDPORT_REQUEST TuningRequest;
 
 #if NV_T214_SDR104
+#if NV_T214_DDR200
+    NTSTATUS t214Status = T214DdrTry(SdhcExtension);
+#else
     NTSTATUS t214Status = T214Tune(SdhcExtension);
+#endif
 #if NV_DIAG_CLOCK
     NvDiagSaveClock(SdhcExtension);
 #endif

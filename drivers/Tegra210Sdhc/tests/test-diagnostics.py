@@ -9,7 +9,8 @@ source = (Path(__file__).resolve().parents[1] / 'src/nvtsdhc.c').read_text()
 diag = source[source.index('typedef struct _NV_DIAG {'):source.index('} NV_DIAG;') + len('} NV_DIAG;')]
 start = source.index('#if NV_DIAG_CLOCK\n/* Snapshot only')
 code = source[start:source.index('\n#if NV_DIAG_REG\n\nstatic VOID\nNvDiagThread', start)]
-fields = sorted(set(re.findall(r'SdhcExtension->(\w+)', code)) - {'Capabilities', 'T214Bounce'})
+fields = sorted(set(re.findall(r'SdhcExtension->(\w+)', code)) -
+                {'Capabilities', 'T214Bounce', 'T214Scr', 'T214SwitchStatus'})
 prefix = r'''
 #include <assert.h>
 #include <stdint.h>
@@ -28,6 +29,7 @@ typedef struct { void (*f)(void*); void *context; } WORK_QUEUE_ITEM;
 #define UNREFERENCED_PARAMETER(a) ((void)(a))
 #define NV_DIAG_CLOCK 1
 #define NV_T214_SDR104 1
+#define NV_T214_DDR200 1
 #define NV_T210_LITE_WINARM_WRITE 1
 #define OBJ_KERNEL_HANDLE 1
 #define OBJ_CASE_INSENSITIVE 2
@@ -60,8 +62,10 @@ static void ExInitializeWorkItem(WORK_QUEUE_ITEM*w,void(*f)(void*),void*c){asser
 static void ExQueueWorkItem(WORK_QUEUE_ITEM*w,int q){(void)q;assert(!queued);queued=1;work=w;}
 static void run_worker(void){assert(queued);queued=0;work->f(work->context);}
 '''
+prefix += (Path(__file__).resolve().parents[1] / 'src/t214_ddr200_policy.h').read_text()
 prefix += diag + '\nstatic NV_DIAG NvDiag;\n'
 prefix += 'typedef struct { struct { ULONG BaseClockFrequencyKhz; } Capabilities; void *T214Bounce;\n'
+prefix += 'UCHAR T214Scr[8],T214SwitchStatus[64];\n'
 prefix += '\n'.join('ULONG ' + name + ';' for name in fields)
 prefix += '\n} SDHC_EXTENSION,*PSDHC_EXTENSION;\n'
 tests = r'''

@@ -7,6 +7,10 @@
 #define T214_DMA_BYTES (1024u * 512u)
 #define T214_DMA_ALLOC (T214_DMA_BYTES + PAGE_SIZE)
 #define T214_IO_BIT (1u << 12)
+#if NV_T214_DDR200
+static NTSTATUS T214ParentClock(PSDHC_EXTENSION s);
+static NTSTATUS T214DdrClock(PSDHC_EXTENSION s, ULONG Frequency);
+#endif
 
 static ULONG T214Read(PUCHAR Base, ULONG Offset)
 { return READ_REGISTER_ULONG((PULONG)(Base + Offset)); }
@@ -118,6 +122,18 @@ static NTSTATUS T214Power(PSDHC_EXTENSION s, BOOLEAN On)
     LiteForgetCard(s);
     USHORT clock = SdhcReadRegisterUshort(s, SDHC_CLOCK_CONTROL);
     SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, clock & ~SDHC_CC_CLOCK_ENABLE);
+#if NV_T214_DDR200
+    if (s->T214DdrActive) {
+        /* The powered-off card returns to SDR. Do not restore its old DDR
+         * divider while the card is coming up at 3.3 V.
+         */
+        s->T214DdrActive = FALSE;
+        s->SpeedMode = SdhcSpeedModeNormal;
+        clock = 0;
+        NTSTATUS parent = T214ParentClock(s);
+        if (!NT_SUCCESS(parent)) return parent;
+    }
+#endif
     SdhcWriteRegisterUchar(s, SDHC_POWER_CONTROL, 0);
     NTSTATUS st = T214Ldo2(s, 3300, FALSE);
     if (!NT_SUCCESS(st)) return st;
@@ -386,6 +402,12 @@ static VOID T214RestoreContext(PSDHC_EXTENSION s)
         if (i==10000) {status=STATUS_IO_TIMEOUT;goto failed;}
     }
     SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, s->T214SavedClock);
+#if NV_T214_DDR200
+    if (s->T214DdrActive && (s->T214SavedClock & SDHC_CC_CLOCK_ENABLE)) {
+        status = T214DdrClock(s, s->T214DdrClockKhz);
+        if (!NT_SUCCESS(status)) goto failed;
+    }
+#endif
     SdhcWriteRegisterUlong(s, 0x34, s->T214SavedEnables);
     SdhcWriteRegisterUlong(s, 0x38, s->T214SavedSignals);
     s->T214Restores++;
@@ -394,6 +416,12 @@ static VOID T214RestoreContext(PSDHC_EXTENSION s)
 failed:
     s->T214ResumeStatus = status;
     s->T214DmaFault = TRUE;
+#if NV_T214_DDR200
+    if (s->T214DdrActive) {
+        s->T214DdrRecoverNeeded = TRUE;
+        s->T214DdrFatal = TRUE;
+    }
+#endif
 }
 static NTSTATUS T214Initialize(PSDHC_EXTENSION s)
 {
