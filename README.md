@@ -2,14 +2,20 @@
 
 Drivers for the **HDH-001 (Tegra T214)** port of Windows 11 ARM64. They use the ACPI devices exposed by the [WinX companion firmware](https://github.com/ruje0504-2/winx). The tested system runs Windows 11 23H2 (22631.2861).
 
+This is the **paused `sc7-test` development branch**, paired with
+[WinX `sc7-test`](https://github.com/ruje0504-2/winx/tree/sc7-test). It retains
+the experimental sleep/wake modules excluded from the default branch.
+The current module builds/host tests passed; complete physical SC7 sleep/wake
+has not passed. The SD/Bluetooth installation below is independent of SC7.
+
 ## Drivers on hardware
 
 | Driver | Result on Switch Lite |
 | --- | --- |
 | `nvtsdhc` | WINARM boots Windows; the current card also exposes FAT32. The latest owner comparison found no clear responsiveness difference between visible and hidden FAT32. [SDR104 / ADMA2 0.4.0.1](drivers/Tegra210Sdhc/README.md#t214-sdr104-candidate) reports 199.68 MHz / 4-bit / 1.8 V, successful tuning and no recorded ADMA errors. Sustained throughput remains unmeasured. |
 | `switchwifi` 0.5.5 | Automatically reconnected to a saved WPA2-Personal network. Windows obtained a DHCP lease and default gateway, and the owner confirmed Internet access. |
-| `nvtsdhc` 0.5.0.1 DDR200 candidate | Automatic capability detection, manual tuning with an eight-tap minimum and bounded SDR104 recovery are implemented. ARM64 builds, host fault tests and signed package checks pass. Installed with FAT32 visible; physical timing, fallback and throughput remain unverified. [DDR200](drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501) |
-| `switchbt` 1.0.0.18 candidate | Discovery has worked, but initialization/search failures recurred. The latest source removes the persistent failed-boot hold and adds one T214 hardware-reset recovery attempt. ARM64 build, host fault tests and signed package checks pass. Installed with DDR200; discovery and lifecycle verification are pending. |
+| `nvtsdhc` 0.5.0.3 DDR200 candidate | Automatic capability detection, manual tuning with an eight-tap minimum and bounded SDR104 recovery are implemented. ARM64 builds, host fault tests and signed package checks pass. Installed and readback-verified with FAT32 visible. The previous 0.5.0.1 combination failed with INACCESSIBLE_BOOT_DEVICE; 0.5.0.3 fixes reproduced event-mask loss during fallback. The next physical boot, timing and fallback remain unverified. [DDR200](drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501) |
+| `switchbt` 1.0.0.19 candidate | Discovery has worked, but initialization/search failures recurred. The latest source removes the persistent failed-boot hold and adds one T214 hardware-reset recovery attempt. ARM64 build, host fault tests and signed package checks pass. The 1.0.0.19 package also prepares UART-D before HCI access. Installed and readback-verified with SD 0.5.0.3; discovery and lifecycle verification remain pending. |
 | GPIO, I²C3 and FTM4 touch | The shared controllers and Lite touch driver handle taps in Windows Setup. |
 | `switchsio` (analog sticks and gamepad) | Windows detected the HID gamepad and mouse and the driver received controller input. Both sticks are exposed to generic HID games. In-game use awaits testing. |
 | `switchsio` desktop controls | Left stick moves the pointer and ZR/ZL click. Capture toggles desktop mode and **+** opens the On-Screen Keyboard (0.2.2 on the card). Version 0.2.3 adds right-stick scrolling, R3 middle click and D-pad keyboard arrows. Hardware test pending. [Button mapping](drivers/SwitchSensor/README.md) |
@@ -22,6 +28,8 @@ Windows uses CPU software rendering only. The Tegra GPU driver for Windows has n
 The USB-C host package is on the Windows 23H2 card and awaits hardware testing. [USB-C host](drivers/TegraXusb/README.md)
 
 Battery, RTC and power-lifecycle results are tracked in the [porting notes](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/PORTING.md).
+
+SC7 development is paused; its experimental sleep/wake code is preserved on [`sc7-test`](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/sc7-test). The default branch excludes its PEP, wake-interrupt and input-idle experiments. S4 remains removed.
 
 ## Building and installing
 

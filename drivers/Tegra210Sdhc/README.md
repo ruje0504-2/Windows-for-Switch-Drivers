@@ -114,7 +114,7 @@ and T214 tuning registers. Resume restores configuration with SDCLK held off
 until the internal clock is stable; commands, FIFO contents, DMA pointers and
 old interrupt status are never replayed. A clock failure closes the DMA gate.
 This covers controller context loss with card power retained, not a card power
-cycle or a complete SC7 platform restore. Fixed `ContextSaves`,
+cycle or platform-wide power loss. Fixed `ContextSaves`,
 `ContextRestores` and `ResumeStatus` values join the existing diagnostic key.
 
 The ARM64 builds and ASan/UBSan DMA/filter/write-bound/context regressions pass.
@@ -133,7 +133,7 @@ segments and checked write bounds. Bounded diagnostics include `AdmaBufferBytes`
 Both hidden and visible builds retain SDR104/ADMA2 and the same runtime
 transfer limit. Earlier comparisons reported roughly one-minute stalls, but
 on the latest trial the owner found no clear responsiveness difference.
-The current card keeps FAT32 visible with package 0.5.0.1 and a matching
+The current card keeps FAT32 visible with package 0.5.0.3 and a matching
 BL33. Further performance investigation is deferred; this is not evidence of
 a completed performance fix. Keep both source profiles available.
 
@@ -185,7 +185,11 @@ FAT32-visible 0.5.0.1 package was installed with Bluetooth 1.0.0.18 on
 2026-11-07; its SYS/INF/CAT matched on readback. The existing visible-profile
 BL33 and all physical partition boundaries were retained. These are
 **code/build results, not physical DDR200 acceptance or a throughput claim**.
-SC7 and repeated retained-memory wake remain separate unfinished work.
+The owner photographed **INACCESSIBLE_BOOT_DEVICE** before the desktop on
+the next boot. The returned card had crash dumps/error logging disabled and
+no current driver record; the failing operation and cause remain unknown. The readback-verified
+installation is therefore **not a successful boot test**. Platform sleep/wake
+is isolated on [`sc7-test`](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/sc7-test).
 
 Resume candidate **0.5.0.2** also saves the active CAR source and base clock.
 It restores SDMMC1's own enable/reset before accessing a lost controller,
@@ -195,9 +199,10 @@ the SDR104 source before switching back. Only SDMMC1's set/clear clock bits
 are changed; old commands, DMA pointers and interrupt status are not replayed.
 PLL, clock-enable, reset, source-readback or internal-clock failure blocks
 data I/O. ARM64 builds for both partition views, actual-callback fault tests
-and signed visible-package checks pass. This candidate is not installed or physically accepted; the card
-still has 0.5.0.1. It covers retained card power, not a complete SC7 platform
-restore or a card power-cycle/re-identification.
+and signed visible-package checks pass. These changes are included in the installed 0.5.0.3 candidate below;
+physical acceptance remains pending. It covers retained card power,
+not platform-wide power loss or a card power-cycle/re-identification. It does
+not depend on the experimental PEP and does not establish a cold-boot fix.
 
 Recovery candidate **0.5.0.3** fixes a reproduced event-mask loss: the private
 DDR200 fallback performs a controller reset-all, which clears SDPORT's status
@@ -210,6 +215,12 @@ zero masks and failed card recovery. Both ARM64 builds pass. This is a
 code-level defect and a candidate fix, not proof of the photographed blue
 screen's root cause or a successful hardware boot. It retains DDR200 and the
 SDR104 fallback; it does not enable SC7.
+
+The signed FAT32-visible 0.5.0.3 package was installed with Bluetooth 1.0.0.19
+on 2026-11-07. SYS/INF/CAT readbacks matched. The original boot/firmware files,
+other drivers, service start settings and Bluetooth pairing state were retained.
+The card was safely ejected. Physical desktop boot, DDR200 selection/fallback
+and Bluetooth discovery still require testing.
 
 ```sh
 python3 drivers/Tegra210Sdhc/tests/test-ddr200.py

@@ -101,7 +101,7 @@ is not installed; repeated physical wake/lock-screen behavior is unverified.
 [Windows system-control usages](https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input)
 
 The current candidate pairs fan **1.0.0.7**, power button **1.0.0.3**, RTC
-**1.0.0.3**, Bluetooth **1.0.0.19**, and the DDR200 **0.5.0.2** candidate. The fan's display
+**1.0.0.3**, Bluetooth **1.0.0.19**, and the DDR200 **0.5.0.3** candidate. The fan's display
 power callback no longer writes registry hives while holding its backlight
 lock. The power button drains its timer before I2C power-down and optionally
 uses a passive wake interrupt instead of polling. The RTC unregisters and
@@ -166,7 +166,7 @@ inbox BthMini child, patchram and 3 Mbaud flow control. The companion firmware's
 `SWITCH_LITE_BLUETOOTH=1` option supplies UART-D/PH3/PH4/PH5, the PMIC 32 kHz
 output and BTH0 resources. Do not add a separate Lite Bluetooth source copy.
 
-The installed **1.0.0.18** retains strict patch/status/baud verification
+The previous **1.0.0.18** trial retains strict patch/status/baud verification
 and HCI cancellation/drain. A stale `BootPending` value is diagnostic only;
 it no longer disables all later boots, and orderly D0 exit clears it. On a
 failed T214 probe, one PH4 reset and full retry are permitted before UART/HCI
@@ -185,8 +185,9 @@ unavailable PLLP parent without touching UART registers. A healthy cold-start
 host is left enabled; shared PLLP, Wi-Fi power and paired-device state are not
 modified. Actual-callback tests cover repeated host context loss, inaccessible
 clocks, stuck reset/enable bits and orderly D0 cleanup. ARM64 compilation and
-SYS/catalog verification pass. This candidate is not installed or hardware
-accepted; 1.0.0.18 remains on the card with DDR200 0.5.0.1.
+SYS/catalog verification pass. It is now installed with DDR200 0.5.0.3;
+package readback, radio identity and paired-device checks passed. Physical
+discovery and a successful boot on this combination are still unverified.
 [Switchroot UART initialization](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/tty/serial/serial-tegra.c#L1108)
 
 The installer includes Bluetooth when a signed `switchbt/switchbt.inf` is
