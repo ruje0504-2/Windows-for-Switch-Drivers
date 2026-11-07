@@ -1,5 +1,10 @@
 # Switch Lite HDH-001
 
+This is the experimental `sc7-test` branch. Retained-memory sleep, PMIC wake,
+processor power management and input runtime-idle changes are isolated here.
+They are not hardware accepted. Use the [default branch](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/hdh001-winarm-bounded-write)
+for normal development; pair this branch with [WinX sc7-test](https://github.com/ruje0504-2/winx/tree/sc7-test).
+
 The Lite build uses the existing Tegra210Gpio and Tegra210I2c drivers and the FTM4 implementation in `drivers/SwitchLiteTouch`. The latter matches ACPI SWOA0502, initializes the controller in Windows, handles quick press/release events and retries HID submission. The public desktop checker is built from `touch-check.c`. Real-hardware testing has confirmed a touch press on the Windows setup dialog. The three-circle TOUCH PASS test is pending.
 
 The build script also produces the existing SwitchPowerButton driver for the optional Lite I2C5/PMIC firmware profile. It reads MAX77620 ONOFFSTAT and ONOFFIRQ and submits HID System Power Down input. Use the firmware build with SWITCH_LITE_POWER=1 and stage switchpwrbtn.inf together with the I2C driver. The package compiles for ARM64; its physical button behavior is pending.
