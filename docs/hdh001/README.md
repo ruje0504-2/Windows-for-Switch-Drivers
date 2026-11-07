@@ -64,7 +64,8 @@ disabled and no new driver diagnostics; the failing operation remains unknown. N
 written during the branch split. Afterwards, SD 0.5.0.3 and Bluetooth 1.0.0.19
 were installed and their signed package/SYS readbacks matched. The SD update
 fixes event-mask loss reproduced in the recovery callback; a successful
-physical boot and Bluetooth discovery remain unverified. See the [SD candidate status](../../drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501).
+physical boot and Bluetooth are now owner-confirmed; actual DDR200 mode
+and fallback remain unverified. See the [SD candidate status](../../drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501).
 
 ## Shared battery, RTC, and volume-button support
 
@@ -113,8 +114,9 @@ host is left enabled; shared PLLP, Wi-Fi power and paired-device state are not
 modified. Actual-callback tests cover repeated host context loss, inaccessible
 clocks, stuck reset/enable bits and orderly D0 cleanup. ARM64 compilation and
 SYS/catalog verification pass. It is now installed with DDR200 0.5.0.3;
-package readback, radio identity and paired-device checks passed. Physical
-discovery and a successful boot on this combination are still unverified.
+package readback, radio identity and paired-device checks passed. The owner
+confirmed successful desktop boot and working Bluetooth on this combination;
+repeated startup and sleep/wake remain separate tests.
 [Switchroot UART initialization](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/tty/serial/serial-tegra.c#L1108)
 
 The installer includes Bluetooth when a signed `switchbt/switchbt.inf` is
