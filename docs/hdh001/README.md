@@ -49,7 +49,7 @@ release input and reinitialize hardware. The power button remains the wake
 source. These changes are compiled and host-tested, not hardware accepted.
 
 The current candidate pairs fan **1.0.0.7**, power button **1.0.0.2**, RTC
-**1.0.0.3**, Bluetooth **1.0.0.17**, and SDR104 **0.4.1.0**. The fan's display
+**1.0.0.3**, Bluetooth **1.0.0.17**, and SDR104 **0.4.2.0**. The fan's display
 power callback no longer writes registry hives while holding its backlight
 lock. The power button drains its timer before I2C power-down and optionally
 uses a passive wake interrupt instead of polling. The RTC unregisters and
@@ -61,10 +61,10 @@ applies Switchroot's PMC interrupt inversion, preserves unrelated PMIC masks,
 and restores its original interrupt mask bits at final shutdown. The
 [T214 processor backend](../../drivers/Tegra214Power/README.md) uses PoFx for
 CPU context save/restore and PSCI C7/CC6, but its 0.1.0.0 boot-start package
-blocked cold boot with `0xc000000f`. Exclude it from S4 kits; it now requires
+blocked cold boot with `0xc000000f`. Exclude it from normal deployment; it requires
 explicit `BUILD_T214_PEP=1` and `SWITCH_LITE_PROCESSOR_IDLE=1` development
-opt-ins. SC7 and S4 are not advertised as
-working. Successful compilation and mocked transitions do not prove physical
+opt-ins. Direct SC7 sleep/wake is not implemented/accepted yet; the S4
+experiment has been removed at the owner's request. Successful compilation and mocked transitions do not prove physical
 sleep, wake, display recovery or lower battery consumption.
 
 Bluetooth 1.0.0.17 addresses a returned-card failure with SafeMode=0 and

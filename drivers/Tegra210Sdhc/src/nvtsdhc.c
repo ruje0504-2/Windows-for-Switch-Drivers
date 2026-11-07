@@ -35,12 +35,6 @@ Revision History:
 // Nintendo Switch (Tegra210) bring-up policy.
 // The default profile retains 3.3 V timing. The bounded T214 SDR104 profile
 // supplies the board-specific voltage, tuning and DMA implementation below.
-#ifndef NV_T214_HIBERNATE
-#define NV_T214_HIBERNATE 0
-#endif
-#if NV_T214_HIBERNATE && !NV_T214_SDR104
-#error "T214 hibernation requires the bounded SDR104 board profile."
-#endif
 #define NV_T210_SAFE_BRINGUP (!NV_T214_SDR104)
 #if NV_T214_SDR104 && !NV_T210_LITE_WINARM_WRITE
 #error "SDR104 requires the bounded per-card Lite profile."
@@ -164,7 +158,7 @@ static BOOLEAN LiteAllowRequest(PSDHC_EXTENSION slot, PSDPORT_REQUEST request)
             return FALSE;
         }
         if ((slot->TargetFacts & required) != required ||
-            (slot->CrashdumpMode && (!NV_T214_HIBERNATE || required != LiteWriteFacts)) || slot->AppPrefixAccepted ||
+            slot->CrashdumpMode || slot->AppPrefixAccepted ||
             cmd->Class == SdCommandClassApp || cmd->TransferDirection != SdTransferDirectionWrite ||
             cmd->TransferMethod != SdTransferMethodPio || cmd->BlockSize != 512 ||
             count == 0 || (cmd->Index == 24 && count != 1) ||
@@ -667,7 +661,7 @@ Return Value:
         .PowerControlCallback = SdhcPoFxPowerControlCallback,
         .Cleanup = SdhcCleanup,
         .PrivateExtensionSize = sizeof(SDHC_EXTENSION),
-        .CrashdumpSupported = !NV_T210_LITE_SLOT || NV_T214_HIBERNATE,
+        .CrashdumpSupported = !NV_T210_LITE_SLOT,
     };
 
 #if NV_DIAG_STOP
@@ -989,8 +983,8 @@ Return value:
 #endif
 
 #if NV_T214_SDR104
-    if ((CrashdumpMode && !NV_T214_HIBERNATE) || Length < 0x200) return STATUS_NOT_SUPPORTED;
-    NTSTATUS t214Status = CrashdumpMode ? T214InitializeDump(SdhcExtension) : T214Initialize(SdhcExtension);
+    if (CrashdumpMode || Length < 0x200) return STATUS_NOT_SUPPORTED;
+    NTSTATUS t214Status = T214Initialize(SdhcExtension);
     if (!NT_SUCCESS(t214Status)) return t214Status;
 #endif
 #if NV_T210_ADMA32
@@ -1528,19 +1522,6 @@ Return value:
 
     SdhcExtension = (PSDHC_EXTENSION) PrivateExtension;
 #if NV_T210_LITE_WINARM_WRITE
-#if NV_T214_HIBERNATE
-    /* Dump SDPORT already knows the hiberfile extents and does not reread the
-     * partition table. Validate the physical card before its first data write.
-     * The same check covers a full card reinitialization after S4 resume. */
-    if ((Request->Command.Index == 24 || Request->Command.Index == 25) &&
-        Request->Type == SdRequestTypeCommandWithTransfer &&
-        LiteBlocksInExtent(Request->Command.Argument, Request->Command.BlockCount,
-                           WINARM_FIRST, WINARM_COUNT) &&
-        (SdhcExtension->TargetFacts & LiteWriteFacts) != LiteWriteFacts) {
-        Status = T214ValidateHibernateTarget(SdhcExtension);
-        if (!NT_SUCCESS(Status)) return Status;
-    }
-#endif
     if (!LiteAllowRequest(SdhcExtension, Request)) {
         NvDiag.DeniedCount += 1;
         NvDiag.LastDeniedCommand = Request->Command.Index;

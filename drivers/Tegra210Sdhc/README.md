@@ -122,51 +122,31 @@ This is a performance and resume candidate: physical desktop responsiveness
 and repeated sleep/wake still require measurement. Use the matching
 FAT32-visible header in BL33 and the miniport; do not mix the two layouts.
 
-### S4 hibernation and larger transfers (0.4.1.0 candidate)
-
-`NV_T214_HIBERNATE=1` additionally enables SDPORT's dump/hibernate contract.
-Initialization maps the board registers and allocates a separate 16 KiB DMA
-payload buffer before the final polled I/O phase. It does not change the live
-card's power, clock or tuning while the dump miniport loads. The final path
-uses bounded polling and no registry, event waits, work items or calls into
-an already-stopped I2C driver. Transfers larger than its small DMA buffer use
-PIO. This does not change the normal runtime DMA allocation.
-
-Before the first WINARM write after card initialization, polled reads validate
-the physical MBR and NTFS boot identity. Dump writes remain limited to WINARM;
-the optional FAT32 runtime view does not grant dump writes to FAT32. Reset and
-identity failures close the write gate. The focused S4 test exercises the real
-read/filter/guard code with CRC, timeout, busy and wrong-card responses.
+### Runtime transfers and hidden-FAT comparison
 
 Switchroot's [B01 microSD configuration](https://github.com/CTCaer/switch-l4t-platform-t210-nx/blob/linux-5.1.2/kernel-dts/nx-platforms/tegra210b01-nx-common.dtsi)
-sets an 8 MiB ADMA request limit. This Windows candidate raises normal I/O's
-buffer/request limit from 64 KiB to 512 KiB, with a 64 KiB allocation fallback.
-Descriptors retain nonzero 32 KiB segments and checked write bounds. Existing
-diagnostics now include `AdmaBufferBytes`, `AdmaRequests`, `AdmaMaxBlocks` and
-`PioFallbackRequests` to show whether Windows actually used the larger batches.
-Host tests cover the full 512 KiB descriptor chain and the separate dump limit;
-this is not a measured throughput or desktop-responsiveness result.
+sets an 8 MiB ADMA request limit. This port uses a 512 KiB runtime buffer/request
+limit, with a 64 KiB allocation fallback. Descriptors retain nonzero 32 KiB
+segments and checked write bounds. Bounded diagnostics include `AdmaBufferBytes`,
+`AdmaRequests`, `AdmaMaxBlocks` and `PioFallbackRequests`.
 
-The owner reached the desktop with 0.4.1.0 after removal of an unrelated
-experimental processor PEP, but reported recurring roughly one-minute stalls
-with FAT32 visible. The next comparison hides FAT32 in both BL33 and the
-miniport, retaining the same SDR104/ADMA2 source and 512 KiB runtime limit.
-Visible-FAT performance remains unresolved; both build profiles are retained.
-The first battery-only hibernation attempt did not restore the session:
-Windows recorded invalid hiber-header data (`0xc000007b`). The write/restore
-path still requires investigation; battery capacity is not an established
-cause, and S4 must also work without an external charger. This is not S4 approval.
+The owner reached the desktop with 0.4.1.0 but reported recurring roughly
+one-minute stalls with FAT32 visible. Package 0.4.1.1 hides FAT32 in both BL33
+and the miniport for comparison. The visible profile remains in source; its
+performance issue is unresolved. Both builds retain SDR104/ADMA2 and the same
+runtime transfer limit.
 
-Package 0.4.1.1 gives the hidden-profile comparison a new INF version so offline
-servicing stages its signed catalog instead of reusing the earlier 0.4.1.0 INF.
-It does not change the SD transfer algorithm from 0.4.1.0.
+Candidate 0.4.2.0 removes the cancelled S4 experiment. The Lite profile does
+not advertise dump/hibernate support, allocate a dump DMA buffer or bypass the
+I2C gate in a dump path. Normal SDR104, card identity/write bounds and the
+retained-power controller-context helpers remain. Those helpers do not provide
+whole-system sleep or re-identification after card power loss.
 
-Build with all three defines: `NV_T210_LITE_WINARM_WRITE=1`, `NV_T214_SDR104=1`,
-`NV_T214_HIBERNATE=1`. Pair it with WinX's `SWITCH_LITE_HIBERNATE=1` firmware
-and the same private target header. Windows must enable a **full** hiberfile;
-normal shutdown keeps Fast Startup disabled. Source/build/signature checks
-are separate from a physical S4 write, power-off and saved-session resume.
+Build with `NV_T210_LITE_WINARM_WRITE=1` and `NV_T214_SDR104=1`, using the same
+private card header in BL33 and the miniport. Direct retained-memory sleep/wake
+is still under development. DDR200 automatic detection, manual tuning and
+SDR104 fallback are a separate planned extension; see the
+[long-term goal](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/PORTING.md#windows-ddr200-goal).
 
-References: [Microsoft SD miniport](https://github.com/microsoft/Windows-driver-samples/tree/main/sd/miniport/sdhc),
-[boot miniport restrictions](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/restrictions-on-miniport-drivers-that-manage-the-boot-drive),
+References: [Microsoft SD miniport](https://github.com/microsoft/Windows-driver-samples/tree/main/sd/miniport/sdhc)
 and [Switchroot SDHCI transfer limits](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/linux-5.1.2/drivers/mmc/host/sdhci.c).

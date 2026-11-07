@@ -11,7 +11,7 @@ extra=${WDK_EXTRA_LIB:-$WDK_LIB}
 cc=${CLANG_CL:-clang-cl}; ld=${LLD_LINK:-lld-link}
 for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:switchtouch SwitchPowerButton:switchpwrbtn SwitchFan:switchfan SwitchBattery:switchbattery SwitchRtc:switchrtc SwitchBluetooth:switchbt SwitchSensor:switchsio TegraXusb:tegraxusb Tegra214Power:tegra214pep; do
     dir=${pair%:*}; name=${pair#*:}; dest="$out/$name"
-    # The experimental boot-start PEP currently blocks cold boot; S4 does not need it.
+    # Keep the experimental boot-start PEP opt-in until its loader failure is fixed.
     if [ "$dir" = Tegra214Power ] && [ "${BUILD_T214_PEP:-0}" != 1 ]; then
         continue
     fi

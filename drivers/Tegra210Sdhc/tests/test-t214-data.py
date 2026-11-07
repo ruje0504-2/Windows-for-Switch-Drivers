@@ -39,7 +39,6 @@ typedef uint16_t USHORT; typedef uint8_t UCHAR, BOOLEAN, *PUCHAR;
 #define _Out_opt_
 #define NT_ASSERT assert
 #define NV_T210_LITE_WINARM_WRITE 1
-#define NV_T214_HIBERNATE 0
 #define SDHC_SPEC_VERSION_3 2
 #define SDHC_MAX_CLOCK_DIVISOR 256
 #define SDHC_MAX_CLOCK_DIVISOR_SPEC_3 2046
@@ -158,7 +157,9 @@ int main(void){
  T214DmaDone(&s,&r);s.TargetFacts|=LiteSdxc;
  r.Command.Index=25;r.Command.BlockCount=128;r.Command.Length=65536;
  r.Command.TransferDirection=SdTransferDirectionWrite;r.Command.TransferType=SdTransferTypeMultiBlock;
- assert(LiteAllowRequest(&s,&r));assert(T214BuildDma(&s,&r));
+ assert(LiteAllowRequest(&s,&r));
+ s.CrashdumpMode=1;assert(!LiteAllowRequest(&s,&r));s.CrashdumpMode=0;
+ assert(T214BuildDma(&s,&r));
  assert(!memcmp(data,bounce,65536));
  ULONG *desc=(ULONG*)(bounce+65536);
  assert(desc[0]==0x80000021&&desc[1]==0x8a000000);
