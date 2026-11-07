@@ -11,7 +11,6 @@
  */
 #include <ntddk.h>
 #include <ntstrsafe.h>
-#include <wdf.h>
 #define PEP_KERNEL_INFORMATION_VERSION PEP_KERNEL_INFORMATION_V3
 #include <pep_x.h>
 #include <intrin.h>
@@ -36,8 +35,7 @@ typedef struct {
 static T214_CPU Cpus[CPU_COUNT];
 static PEP_KERNEL_INFORMATION Kernel;
 static volatile LONG DisplayOffState;
-static PVOID DisplayCallback;
-static WDFWORKITEM SnapshotWork;
+static NTSTATUS RegisterStatus;
 static PUCHAR Car;
 static WCHAR Parameters[320];
 static const GUID DisplayGuid = {0x6fe69556,0x704a,0x47a0,{0x8f,0x24,0xc2,0x8d,0x93,0x6f,0xda,0x47}};
@@ -45,10 +43,25 @@ static UNICODE_STRING CpuNames[CPU_COUNT];
 static const PCWSTR CpuPaths[] = {L"\\_SB.CPU0",L"\\_SB.CPU1",L"\\_SB.CPU2",L"\\_SB.CPU3"};
 
 DRIVER_INITIALIZE DriverEntry;
-EVT_WDF_DRIVER_DEVICE_ADD AddDevice;
-EVT_WDF_DEVICE_SELF_MANAGED_IO_INIT StartNotifications;
-EVT_WDF_DEVICE_QUERY_REMOVE RefuseRemoval;
-EVT_WDF_WORKITEM Snapshot;
+DRIVER_ADD_DEVICE AddDevice;
+DRIVER_DISPATCH DispatchPnp;
+DRIVER_DISPATCH DispatchForward;
+IO_WORKITEM_ROUTINE Snapshot;
+
+/* PEP is loaded in Core Platform Extensions, before ordinary device stacks.
+ * Follow Microsoft's native i.MX PEP lifetime instead of importing WDFLDR.
+ * PoFx has no unregister call; processor state and driver code stay resident.
+ * The PnP object owns only display notifications and deferred diagnostics. */
+typedef struct {
+    PDEVICE_OBJECT Lower;
+    PIO_WORKITEM Work;
+    PVOID DisplayCallback;
+    KSPIN_LOCK Lock;
+    KEVENT Idle;
+    BOOLEAN Queued;
+    BOOLEAN Stopping;
+} T214_DEVICE;
+static T214_DEVICE *AttachedDevice;
 
 static VOID Trace(PCWSTR Name, ULONG Value)
 {
@@ -186,19 +199,35 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle,ULONG Notification,PVOID Data)
     }
 }
 
+static VOID QueueSnapshot(T214_DEVICE *Device)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&Device->Lock,&irql);
+    if (!Device->Stopping && !Device->Queued) {
+        Device->Queued=TRUE;
+        KeClearEvent(&Device->Idle);
+        IoQueueWorkItem(Device->Work,Snapshot,DelayedWorkQueue,Device);
+    }
+    KeReleaseSpinLock(&Device->Lock,irql);
+}
 static NTSTATUS DisplayChanged(LPCGUID Setting,PVOID Value,ULONG Length,PVOID Context)
 {
-    UNREFERENCED_PARAMETER(Context);
     if (IsEqualGUID(Setting,&DisplayGuid) && Length==sizeof(ULONG)) {
         InterlockedExchange(&DisplayOffState,*(PULONG)Value==0);
-        if (SnapshotWork) WdfWorkItemEnqueue(SnapshotWork);
+        QueueSnapshot((T214_DEVICE *)Context);
     }
     return STATUS_SUCCESS;
 }
-VOID Snapshot(WDFWORKITEM Work)
+VOID Snapshot(PDEVICE_OBJECT Object,PVOID Context)
 {
+    T214_DEVICE *device=Context;
     ULONG attempts=0,returns=0;
-    UNREFERENCED_PARAMETER(Work);
+    KIRQL irql;
+    UNREFERENCED_PARAMETER(Object);
+    /* Registry I/O starts only after PnP start, never during early PEP load. */
+    (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE,Parameters);
+    Trace(L"RegisterStatus",(ULONG)RegisterStatus);
+    Trace(L"DriverVersion",2);
     for (ULONG i=0;i<CPU_COUNT;i++) {
         attempts+=(ULONG)InterlockedCompareExchange(&Cpus[i].Attempts,0,0);
         returns+=(ULONG)InterlockedCompareExchange(&Cpus[i].Returns,0,0);
@@ -206,54 +235,152 @@ VOID Snapshot(WDFWORKITEM Work)
     }
     Trace(L"HaltAttempts",attempts);Trace(L"HaltReturns",returns);Trace(L"ProcessorCount",OnlineCount());
     Trace(L"DisplayOff",(ULONG)InterlockedCompareExchange(&DisplayOffState,0,0));
+    KeAcquireSpinLock(&device->Lock,&irql);
+    device->Queued=FALSE;
+    KeSetEvent(&device->Idle,IO_NO_INCREMENT,FALSE);
+    KeReleaseSpinLock(&device->Lock,irql);
 }
-NTSTATUS StartNotifications(WDFDEVICE Device)
+static NTSTATUS StartNotifications(PDEVICE_OBJECT Object)
 {
-    NTSTATUS s=PoRegisterPowerSettingCallback(WdfDeviceWdmGetDeviceObject(Device),&DisplayGuid,
-                                             DisplayChanged,NULL,&DisplayCallback);
-    Trace(L"DisplayCallbackStatus",(ULONG)s);return s;
+    T214_DEVICE *device=Object->DeviceExtension;
+    KIRQL irql;
+    if (device->DisplayCallback) return STATUS_SUCCESS;
+    KeAcquireSpinLock(&device->Lock,&irql);
+    device->Stopping=FALSE;
+    KeReleaseSpinLock(&device->Lock,irql);
+    NTSTATUS status=PoRegisterPowerSettingCallback(Object,&DisplayGuid,DisplayChanged,
+                                                   device,&device->DisplayCallback);
+    if (NT_SUCCESS(status)) QueueSnapshot(device);
+    return status;
 }
-NTSTATUS RefuseRemoval(WDFDEVICE Device)
+static VOID StopNotifications(T214_DEVICE *Device)
 {
-    UNREFERENCED_PARAMETER(Device);
-    /* PoFx has no unregister operation. Servicing this boot driver requires restart. */
-    return STATUS_UNSUCCESSFUL;
+    KIRQL irql;
+    KeAcquireSpinLock(&Device->Lock,&irql);
+    Device->Stopping=TRUE;
+    KeReleaseSpinLock(&Device->Lock,irql);
+    if (Device->DisplayCallback) {
+        (VOID)PoUnregisterPowerSettingCallback(Device->DisplayCallback);
+        Device->DisplayCallback=NULL;
+    }
+    (VOID)KeWaitForSingleObject(&Device->Idle,Executive,KernelMode,FALSE,NULL);
+    InterlockedExchange(&DisplayOffState,0);
 }
-NTSTATUS AddDevice(WDFDRIVER Driver,PWDFDEVICE_INIT Init)
+static NTSTATUS Complete(PIRP Irp,NTSTATUS Status)
 {
-    WDF_PNPPOWER_EVENT_CALLBACKS cb;WDFDEVICE device;NTSTATUS status;
-    WDF_WORKITEM_CONFIG work;WDF_OBJECT_ATTRIBUTES attributes;
-    UNREFERENCED_PARAMETER(Driver);
-    WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&cb);cb.EvtDeviceSelfManagedIoInit=StartNotifications;
-    cb.EvtDeviceQueryRemove=RefuseRemoval;cb.EvtDeviceQueryStop=RefuseRemoval;
-    WdfDeviceInitSetPnpPowerEventCallbacks(Init,&cb);
-    status=WdfDeviceCreate(&Init,WDF_NO_OBJECT_ATTRIBUTES,&device);
+    Irp->IoStatus.Status=Status;
+    IoCompleteRequest(Irp,IO_NO_INCREMENT);
+    return Status;
+}
+static NTSTATUS ForwardComplete(PDEVICE_OBJECT Object,PIRP Irp,PVOID Context)
+{
+    UNREFERENCED_PARAMETER(Object);
+    UNREFERENCED_PARAMETER(Irp);
+    KeSetEvent((PKEVENT)Context,IO_NO_INCREMENT,FALSE);
+    return STATUS_MORE_PROCESSING_REQUIRED;
+}
+static NTSTATUS ForwardAndWait(T214_DEVICE *Device,PIRP Irp)
+{
+    KEVENT event;
+    KeInitializeEvent(&event,NotificationEvent,FALSE);
+    IoCopyCurrentIrpStackLocationToNext(Irp);
+    IoSetCompletionRoutine(Irp,ForwardComplete,&event,TRUE,TRUE,TRUE);
+    NTSTATUS status=IoCallDriver(Device->Lower,Irp);
+    if (status==STATUS_PENDING)
+        (VOID)KeWaitForSingleObject(&event,Executive,KernelMode,FALSE,NULL);
+    return Irp->IoStatus.Status;
+}
+NTSTATUS DispatchForward(PDEVICE_OBJECT Object,PIRP Irp)
+{
+    T214_DEVICE *device=Object->DeviceExtension;
+    IoSkipCurrentIrpStackLocation(Irp);
+    return IoCallDriver(device->Lower,Irp);
+}
+NTSTATUS DispatchPnp(PDEVICE_OBJECT Object,PIRP Irp)
+{
+    T214_DEVICE *device=Object->DeviceExtension;
+    PIO_STACK_LOCATION stack=IoGetCurrentIrpStackLocation(Irp);
+    NTSTATUS status;
+    switch (stack->MinorFunction) {
+    case IRP_MN_START_DEVICE:
+        status=ForwardAndWait(device,Irp);
+        if (NT_SUCCESS(status)) status=StartNotifications(Object);
+        return Complete(Irp,status);
+    case IRP_MN_QUERY_CAPABILITIES:
+        status=ForwardAndWait(device,Irp);
+        if (NT_SUCCESS(status)) {
+            PDEVICE_CAPABILITIES cap=stack->Parameters.DeviceCapabilities.Capabilities;
+            cap->EjectSupported=FALSE;cap->Removable=FALSE;cap->SilentInstall=TRUE;
+        }
+        return Complete(Irp,status);
+    case IRP_MN_QUERY_REMOVE_DEVICE:
+    case IRP_MN_QUERY_STOP_DEVICE:
+        return Complete(Irp,STATUS_UNSUCCESSFUL);
+    case IRP_MN_STOP_DEVICE:
+    case IRP_MN_SURPRISE_REMOVAL:
+        StopNotifications(device);
+        Irp->IoStatus.Status=STATUS_SUCCESS;
+        return DispatchForward(Object,Irp);
+    case IRP_MN_REMOVE_DEVICE: {
+        /* Start failure can still cause removal despite query-remove refusal. */
+        StopNotifications(device);
+        PDEVICE_OBJECT lower=device->Lower;
+        Irp->IoStatus.Status=STATUS_SUCCESS;
+        IoSkipCurrentIrpStackLocation(Irp);
+        status=IoCallDriver(lower,Irp);
+        IoDetachDevice(lower);
+        IoFreeWorkItem(device->Work);
+        AttachedDevice=NULL;
+        IoDeleteDevice(Object);
+        return status;
+    }
+    default:
+        return DispatchForward(Object,Irp);
+    }
+}
+NTSTATUS AddDevice(PDRIVER_OBJECT Driver,PDEVICE_OBJECT PhysicalDevice)
+{
+    PDEVICE_OBJECT object;
+    if (AttachedDevice) return STATUS_DEVICE_BUSY;
+    NTSTATUS status=IoCreateDevice(Driver,sizeof(T214_DEVICE),NULL,FILE_DEVICE_UNKNOWN,
+                                  FILE_DEVICE_SECURE_OPEN,FALSE,&object);
     if (!NT_SUCCESS(status)) return status;
-    WDF_WORKITEM_CONFIG_INIT(&work,Snapshot);work.AutomaticSerialization=FALSE;
-    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);attributes.ParentObject=device;
-    return WdfWorkItemCreate(&work,&attributes,&SnapshotWork);
+    T214_DEVICE *device=object->DeviceExtension;
+    KeInitializeSpinLock(&device->Lock);
+    KeInitializeEvent(&device->Idle,NotificationEvent,TRUE);
+    device->Stopping=TRUE;
+    device->Work=IoAllocateWorkItem(object);
+    if (!device->Work) {IoDeleteDevice(object);return STATUS_INSUFFICIENT_RESOURCES;}
+    status=IoAttachDeviceToDeviceStackSafe(object,PhysicalDevice,&device->Lower);
+    if (!NT_SUCCESS(status)) {
+        IoFreeWorkItem(device->Work);IoDeleteDevice(object);return status;
+    }
+    AttachedDevice=device;
+    object->Flags&=~(DO_DEVICE_INITIALIZING|DO_POWER_PAGABLE);
+    return STATUS_SUCCESS;
 }
 NTSTATUS DriverEntry(PDRIVER_OBJECT Object,PUNICODE_STRING Path)
 {
-    WDF_DRIVER_CONFIG cfg;PEP_INFORMATION info={0};PHYSICAL_ADDRESS pa;NTSTATUS s;
+    PEP_INFORMATION info={0};PHYSICAL_ADDRESS pa;NTSTATUS status;
     if (Path->Length+sizeof(L"\\Parameters")>sizeof(Parameters)) return STATUS_INVALID_PARAMETER;
     RtlCopyMemory(Parameters,Path->Buffer,Path->Length);
     RtlCopyMemory((PUCHAR)Parameters+Path->Length,L"\\Parameters",sizeof(L"\\Parameters"));
-    (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE,Parameters);
     pa.QuadPart=0x70000804;PULONG hid=MmMapIoSpaceEx(pa,sizeof(ULONG),PAGE_READWRITE|PAGE_NOCACHE);
     if (!hid) return STATUS_INSUFFICIENT_RESOURCES;
     ULONG id=READ_REGISTER_ULONG(hid);MmUnmapIoSpace(hid,sizeof(ULONG));
     if ((id&0xfff0u)!=0x2120u) return STATUS_NOT_SUPPORTED;
     pa.QuadPart=0x60006000;Car=MmMapIoSpaceEx(pa,0x100,PAGE_READWRITE|PAGE_NOCACHE);
     if (!Car) return STATUS_INSUFFICIENT_RESOURCES;
-    WDF_DRIVER_CONFIG_INIT(&cfg,AddDevice);
-    s=WdfDriverCreate(Object,Path,WDF_NO_OBJECT_ATTRIBUTES,&cfg,WDF_NO_HANDLE);
-    if (!NT_SUCCESS(s)) {MmUnmapIoSpace(Car,0x100);Car=NULL;return s;}
+    for (ULONG i=0;i<=IRP_MJ_MAXIMUM_FUNCTION;i++) Object->MajorFunction[i]=DispatchForward;
+    Object->MajorFunction[IRP_MJ_PNP]=DispatchPnp;
+    Object->DriverExtension->AddDevice=AddDevice;
+    /* No unload callback: PoFx retains processor callbacks for this boot. */
     for (ULONG i=0;i<CPU_COUNT;i++) RtlInitUnicodeString(&CpuNames[i],CpuPaths[i]);
     info.Version=PEP_INFORMATION_VERSION;info.Size=sizeof(info);
     info.AcceptDeviceNotification=DeviceNotify;info.AcceptProcessorNotification=ProcessorNotify;
     Kernel.Version=PEP_KERNEL_INFORMATION_V3;Kernel.Size=sizeof(Kernel);
-    s=PoFxRegisterPlugin(&info,&Kernel);Trace(L"RegisterStatus",(ULONG)s);Trace(L"DriverVersion",1);
-    if (!NT_SUCCESS(s)) {MmUnmapIoSpace(Car,0x100);Car=NULL;}
-    return s;
+    status=PoFxRegisterPlugin(&info,&Kernel);
+    RegisterStatus=status;
+    if (!NT_SUCCESS(status)) {MmUnmapIoSpace(Car,0x100);Car=NULL;}
+    return status;
 }

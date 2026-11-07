@@ -18,6 +18,9 @@ for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:sw
     driver_dir="$src/drivers/$dir"
     mkdir -p "$dest"
     for file in "$driver_dir/src/$name.c" "$src/tools/kmdf_support.c"; do
+        if [ "$dir" = Tegra214Power ] && [ "$file" = "$src/tools/kmdf_support.c" ]; then
+            continue
+        fi
         obj=${file##*/}; obj=${obj%.c}.obj
         "$cc" --target=aarch64-pc-windows-msvc /nologo /c /kernel /GS- /Gy /Zl /O2 /W4 /WX \
             -Wno-unused-parameter -Wno-microsoft-anon-tag -Wno-ignored-pragma-intrinsic \
@@ -35,9 +38,15 @@ for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:sw
         SwitchBattery) set -- "$extra/battc.lib" ;;
         SwitchLiteTouch|SwitchPowerButton|SwitchSensor)  set -- "$extra/vhfkm.lib" "$extra/libcntpr.lib" ;;
     esac
-    "$ld" /nologo /driver /subsystem:native,10.0 /machine:arm64 /entry:FxDriverEntry /nodefaultlib \
+    entry=FxDriverEntry
+    if [ "$dir" = Tegra214Power ]; then
+        entry=DriverEntry
+    else
+        set -- "$dest/kmdf_support.obj" "$WDF_LIB/wdfdriverentry.lib" "$WDF_LIB/wdfldr.lib" "$@"
+    fi
+    "$ld" /nologo /driver /subsystem:native,10.0 /machine:arm64 "/entry:$entry" /nodefaultlib \
         /release /opt:ref /opt:icf /tsaware:no /section:.text,ERP /section:.rdata,RP /section:.data,RWP \
         /section:.pdata,RP /section:INIT,ERD /timestamp:0 "/out:$dest/$name.sys" "/map:$dest/$name.map" \
-        "$dest/$name.obj" "$dest/kmdf_support.obj" "$WDF_LIB/wdfdriverentry.lib" "$WDF_LIB/wdfldr.lib" \
+        "$dest/$name.obj" \
         "$WDK_LIB/ntoskrnl.lib" "$WDK_LIB/hal.lib" "$WDK_LIB/ntstrsafe.lib" "$extra/bufferoverflowfastfailk.lib" "$@"
 done

@@ -29,6 +29,15 @@ behavior.
 The owner subsequently confirmed normal desktop boot after offline removal
 of this package and installation of the paired firmware without the PEP device.
 
+Candidate 0.1.0.2 follows the native WDM lifecycle in Microsoft's i.MX PEP,
+removing the early `WDFLDR.SYS` dependency and the KMDF INF section. Its imports
+are limited to the kernel and HAL. Display notifications start after PnP start;
+registry diagnostics run in a coalesced worker. Stop/removal unregisters the
+callback and drains that worker, while the registered processor callbacks and
+their state stay resident. ARM64 compilation, the actual processor-callback
+test and the notification/drain test pass. This removes a load dependency but
+does not yet prove that the previous `0xc000000f` failure is fixed on the Lite.
+
 Exclude this package from normal installations. The shared build script skips it
 unless `BUILD_T214_PEP=1` is explicitly set, and the firmware requires a
 separate `SWITCH_LITE_PROCESSOR_IDLE=1` flag to expose `SWOA0E01`.
@@ -38,6 +47,6 @@ package stays excluded from the normal installation.
 The implementation remains for the C7/CC6 and SC7 work. Continue in the firmware repository's
 [porting status](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/PORTING.md).
 
-References: [Microsoft i.MX PEP](https://github.com/ms-iot/imx-iotcore/tree/public_preview/driver/power/imx6pep),
+References: [Microsoft i.MX PEP lifecycle](https://github.com/ms-iot/imx-iotcore/blob/public_preview/driver/power/imx6pep/sys/mx6pep.cpp),
 [PoFx ProcessorHalt](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/pepfx/nc-pepfx-pofxcallbackprocessorhalt),
 and [pinned Switchroot ATF](https://github.com/LineageOS/android_hardware_nintendo_arm-trusted-firmware/blob/85081cab2050051ea6e93206ef0f80bc0676e613/plat/nvidia/tegra/soc/t210/plat_psci_handlers.c).
