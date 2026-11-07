@@ -153,8 +153,13 @@ with FAT32 visible. The next comparison hides FAT32 in both BL33 and the
 miniport, retaining the same SDR104/ADMA2 source and 512 KiB runtime limit.
 Visible-FAT performance remains unresolved; both build profiles are retained.
 The first battery-only hibernation attempt did not restore the session:
-Windows recorded invalid hiber-header data (`0xc000007b`). A powered retry
-and the write/restore path still require investigation; this is not S4 approval.
+Windows recorded invalid hiber-header data (`0xc000007b`). The write/restore
+path still requires investigation; battery capacity is not an established
+cause, and S4 must also work without an external charger. This is not S4 approval.
+
+Package 0.4.1.1 gives the hidden-profile comparison a new INF version so offline
+servicing stages its signed catalog instead of reusing the earlier 0.4.1.0 INF.
+It does not change the SD transfer algorithm from 0.4.1.0.
 
 Build with all three defines: `NV_T210_LITE_WINARM_WRITE=1`, `NV_T214_SDR104=1`,
 `NV_T214_HIBERNATE=1`. Pair it with WinX's `SWITCH_LITE_HIBERNATE=1` firmware
