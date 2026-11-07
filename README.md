@@ -6,9 +6,9 @@ Drivers for the **HDH-001 (Tegra T214)** port of Windows 11 ARM64. They use the 
 
 | Driver | Result on Switch Lite |
 | --- | --- |
-| `nvtsdhc` | WINARM boots Windows; FAT32 is hidden by default. [SDR104 / ADMA2 0.4.0.1](drivers/Tegra210Sdhc/README.md#t214-sdr104-candidate) reports 199.68 MHz / 4-bit / 1.8 V, successful tuning and no recorded ADMA errors. Sustained throughput remains unmeasured. |
+| `nvtsdhc` | WINARM boots Windows; the current card also exposes FAT32. The latest owner comparison found no clear responsiveness difference between visible and hidden FAT32. [SDR104 / ADMA2 0.4.0.1](drivers/Tegra210Sdhc/README.md#t214-sdr104-candidate) reports 199.68 MHz / 4-bit / 1.8 V, successful tuning and no recorded ADMA errors. Sustained throughput remains unmeasured. |
 | `switchwifi` 0.5.5 | Automatically reconnected to a saved WPA2-Personal network. Windows obtained a DHCP lease and default gateway, and the owner confirmed Internet access. |
-| `switchbt` 1.0.0.15 | After a stale boot-guard marker was cleared, the owner confirmed Bluetooth discovery and normal Windows shutdown in the same run. The package handles in-flight HCI write cancellation. Pairing and range remain unverified by that run. |
+| `switchbt` 1.0.0.18 candidate | Discovery has worked, but initialization/search failures recurred. The latest source removes the persistent failed-boot hold and adds one T214 hardware-reset recovery attempt. ARM64 build and host fault tests pass; installation and physical verification are pending with DDR200. |
 | GPIO, I²C3 and FTM4 touch | The shared controllers and Lite touch driver handle taps in Windows Setup. |
 | `switchsio` (analog sticks and gamepad) | Windows detected the HID gamepad and mouse and the driver received controller input. Both sticks are exposed to generic HID games. In-game use awaits testing. |
 | `switchsio` desktop controls | Left stick moves the pointer and ZR/ZL click. Capture toggles desktop mode and **+** opens the On-Screen Keyboard (0.2.2 on the card). Version 0.2.3 adds right-stick scrolling, R3 middle click and D-pad keyboard arrows. Hardware test pending. [Button mapping](drivers/SwitchSensor/README.md) |
@@ -25,7 +25,7 @@ Battery, RTC and power-lifecycle results are tracked in the [porting notes](http
 ## Building and installing
 
 - Start with the [HDH-001 build and install guide](docs/hdh001/README.md) for the ARM64 toolchain, test signing and device packages.
-- Use the same card-specific header for both the Windows SD miniport and WinX BL33. The default exposes only `WINARM`. The optional `--expose-fat32` profile also mounts FAT32, but caused noticeable desktop lag in a same-card comparison and needs optimization. [SD miniport build](drivers/Tegra210Sdhc/README.md#restricted-winarm-writes-on-hdh-001)
+- Use the same card-specific header for both the Windows SD miniport and WinX BL33. The default exposes only `WINARM`. The `--expose-fat32` profile also mounts FAT32 and is currently selected by the owner. The latest comparison did not establish a clear performance difference; neither a confirmed regression cause nor a performance fix is claimed. [SD miniport build](drivers/Tegra210Sdhc/README.md#restricted-winarm-writes-on-hdh-001)
 - For Wi-Fi installation, required board firmware and driver diagnostics, see the [SwitchWifi guide](drivers/SwitchWifi/README.md).
 
 ## Upstream

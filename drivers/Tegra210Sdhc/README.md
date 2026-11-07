@@ -36,7 +36,7 @@ with the development build. The default ADMA configuration was outside that test
 
 Build with `NV_T210_LITE_WINARM_WRITE=1`. The default card profile presents the 80 GiB NTFS partition `WINARM` as the sole, active MBR entry. Windows accepts block writes only inside that partition after checking its identity. Hekate still reads the physical FAT32 volume.
 
-To also mount FAT32 in Windows, pass `--expose-fat32` to the generator. This experimental profile projects FAT32 as the second MBR entry and permits writes there only after validating its extent and boot sector. On the same Lite, showing FAT32 caused noticeable desktop lag. Hiding it made the interface much smoother. The cause still needs investigation.
+To also mount FAT32 in Windows, pass `--expose-fat32` to the generator. This experimental profile projects FAT32 as the second MBR entry and permits writes there only after validating its extent and boot sector. Earlier trials reported stalls, but the latest owner comparison found similar responsiveness with FAT32 visible or hidden. No reproducible performance difference or root cause is established; the current card uses the visible profile.
 
 The generator reads a saved whole-card image and validates its hybrid MBR, primary GPT and NTFS boot sector. The tested layout places WINARM in MBR slot 4 and GPT slot 11. Both profiles protect the physical partition tables and other partitions from writes. Keep the generated identifiers private.
 
@@ -130,19 +130,12 @@ limit, with a 64 KiB allocation fallback. Descriptors retain nonzero 32 KiB
 segments and checked write bounds. Bounded diagnostics include `AdmaBufferBytes`,
 `AdmaRequests`, `AdmaMaxBlocks` and `PioFallbackRequests`.
 
-The owner reached the desktop with 0.4.1.0 but reported recurring roughly
-one-minute stalls with FAT32 visible. Package 0.4.1.1 hides FAT32 in both BL33
-and the miniport for comparison. The visible profile remains in source; its
-performance issue is unresolved. Both builds retain SDR104/ADMA2 and the same
-runtime transfer limit.
-
-The owner reported no recurring stalls in the 0.4.2.0 hidden-FAT trial and
-requested a visible-FAT comparison. Package 0.4.2.1 provides a distinct INF
-version for that signed visible-profile package, with the same transfer code.
-The paired BL33 must expose the same partition view. The owner reproduced
-a roughly one-minute stall with 0.4.2.1, then requested the visible profile
-again together with the previously accepted Bluetooth package. The cause is
-still unproven; further performance investigation was deferred on request.
+Both hidden and visible builds retain SDR104/ADMA2 and the same runtime
+transfer limit. Earlier comparisons reported roughly one-minute stalls, but
+on the latest trial the owner found no clear responsiveness difference.
+The current request keeps FAT32 visible with package 0.4.2.1 and a matching
+BL33. Further performance investigation is deferred; this is not evidence of
+a completed performance fix. Keep both source profiles available.
 
 Candidate 0.4.2.0 removes the cancelled S4 experiment. The Lite profile does
 not advertise dump/hibernate support, allocate a dump DMA buffer or bypass the

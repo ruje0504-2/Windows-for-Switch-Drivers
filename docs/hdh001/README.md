@@ -109,23 +109,27 @@ The display-only sources stay in the existing WinX tree. After the physical Lite
 
 ## Bluetooth preparation
 
-The current card has the upstream `drivers/SwitchBluetooth` 1.0.0.13 implementation. It uses the same UART-D H4 transport, BthMini child, patchram and 3 Mbaud flow-control path as upstream. No separate Lite Bluetooth source is added. The companion firmware's `SWITCH_LITE_BLUETOOTH=1` option supplies UART-D/PH3/PH4/PH5 initialization, the PMIC 32 kHz output, and BTH0 resources.
+The shared `drivers/SwitchBluetooth` implementation uses UART-D H4, the
+inbox BthMini child, patchram and 3 Mbaud flow control. The companion firmware's
+`SWITCH_LITE_BLUETOOTH=1` option supplies UART-D/PH3/PH4/PH5, the PMIC 32 kHz
+output and BTH0 resources. Do not add a separate Lite Bluetooth source copy.
 
-The separate 1.0.0.14 build starts the retry timer after KMDF connects the UART
-interrupt. Before entering a lower power state, it closes HCI access, drains
-the timer and completes held reads and writes. The boot marker clears after
-five two-second intervals with a successfully created child. The card retains
-1.0.0.13. After the two-volume storage repair the owner confirmed Bluetooth works
-on the trimmed Pro desktop. In an isolated ARM64 Windows PE 22621.2861 guest,
-the signed driver bound to the ACPI UART and ran its timer in safe mode.
-The guest vetoed the device-disable request. Removal, physical radio pairing
-and system power transitions remain unverified.
-[KMDF interrupt power callback](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdfdevice/nc-wdfdevice-evt_wdf_device_d0_exit_pre_interrupts_disabled),
-[KMDF timer drain](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdftimer/nf-wdftimer-wdftimerstop).
+The latest **1.0.0.18 candidate** retains strict patch/status/baud verification
+and HCI cancellation/drain. A stale `BootPending` value is diagnostic only;
+it no longer disables all later boots, and orderly D0 exit clears it. On a
+failed T214 probe, one PH4 reset and full retry are permitted before UART/HCI
+traffic starts. PH3 is held awake; Wi-Fi power and the shared 32 kHz clock are
+untouched. These follow the Switchroot B01 Bluetooth wiring and the existing
+Lite DXE power sequence. ARM64 compilation and host fault tests pass; repeat
+physical discovery and shutdown remain unverified. Install it with the DDR200
+update requested by the owner, not as another standalone rollback package.
 
-The installer includes Bluetooth only when a signed `switchbt/switchbt.inf` is present beside it. Supply the Switch-specific patch at `Firmware/BCM4356A3.hcd`; it is copied before the driver is staged. The blob is not part of this source repository. Switchroot documents its [NX patch source](https://gitlab.com/switchroot/android/proprietary_vendor_firmware/-/blob/main/README.md). The combined BasicDisplay/audio/Bluetooth kit is built and deployed. Signed package checks and native Windows staging pass; pairing and range remain untested on Lite. Upstream reports limited radio range while the Wi-Fi-side antenna initialization is absent.
-
-For diagnostics, use the existing `kits/Switch-Bluetooth/Bluetooth.ps1 -Mode Status`. Its `Retry` mode clears the upstream failed-boot hold and permits another probe without replacing the driver. The radio child is deliberately added after a delay, so check Settings after it enumerates.
+The installer includes Bluetooth when a signed `switchbt/switchbt.inf` is
+present. Supply the private Switch-specific patch at `Firmware/BCM4356A3.hcd`;
+it is copied before driver staging and is not distributed in this repository.
+Use `kits/Switch-Bluetooth/Bluetooth.ps1 -Mode Status` to read bounded existing
+diagnostics. The child is added after a delay. Check the actually loaded
+`DriverVersion`, since an older staged package can supersede a file-only rollback.
 
 ### Built-in gamepad and motion
 

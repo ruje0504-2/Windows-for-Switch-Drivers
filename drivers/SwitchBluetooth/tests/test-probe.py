@@ -3,10 +3,10 @@
 from pathlib import Path
 import os, re, subprocess, tempfile
 source = (Path(__file__).resolve().parents[1] / 'src/switchbt.c').read_text()
-names = ('SwBtReset', 'SwBtReadVersion', 'SwBtPatchram', 'SwBtHighSpeed', 'SwBtProbe')
+names = ('SwBtReset', 'SwBtReadVersion', 'SwBtPatchram', 'SwBtHighSpeed', 'SwBtProbe', 'SwBtHardwareReset', 'SwBtProbeWithRecovery', 'SwBtStart', 'SwBtEvtD0Entry', 'SwBtEvtD0Exit')
 functions = []
 for name in names:
-    m = re.search(r'^static (?:BOOLEAN|ULONG) ' + name + r'\(', source, re.M)
+    m = re.search(r'^(?:static )?(?:BOOLEAN|ULONG|VOID|NTSTATUS) ' + name + r'\([^;{]*\)\s*\{', source, re.M)
     assert m, name
     a=source.index('{',m.start()); b=a+1; depth=1
     while depth:
@@ -30,7 +30,22 @@ typedef uint32_t ULONG,*PULONG; typedef wchar_t WCHAR; typedef bool BOOLEAN;
 #define RTL_NUMBER_OF(x) (sizeof(x)/sizeof((x)[0]))
 #define POOL_TAG 0
 #define UART_MCR 4
-struct DEVICE { volatile ULONG *CarUartd; BOOLEAN HighSpeedNow,FirmwareVerified; ULONG FirmwareVersion; UCHAR BdAddr[6]; };
+typedef void *PVOID;
+typedef struct { uint64_t QuadPart; } PHYSICAL_ADDRESS;
+#define PAGE_READONLY 1
+#define PAGE_READWRITE 2
+#define PAGE_NOCACHE 4
+#define UART_IER 1
+#define CHILD_DELAY_TICKS 10
+#define UNREFERENCED_PARAMETER(x) ((void)(x))
+#define STATUS_SUCCESS 0
+#define STATUS_DEVICE_HARDWARE_ERROR -1
+typedef int NTSTATUS,WDF_POWER_DEVICE_STATE;
+struct DEVICE { volatile ULONG *CarUartd,*Uart; BOOLEAN HighSpeedNow,FirmwareVerified,D0Active,ChipOk,BootGuardPending; ULONG FirmwareVersion,Lock,RxGot,ChildTick,Ticks; UCHAR BdAddr[6]; };
+typedef struct DEVICE *WDFDEVICE;
+static ULONG gpio[41],hid=0x2120,uart[16],hwresets,boot_pending;
+static bool hardware_recovers;
+
 typedef struct DEVICE SWBT_DEVICE,*PSWBT_DEVICE;
 static ULONG car,host_baud,chip_baud,version,patch_record,downloads,attempts,commands;
 static ULONG failed_record,failed_opcode,fw_result,high_result;
@@ -42,6 +57,7 @@ static void SwBtTrace(const WCHAR *name,ULONG v) {
  if(!wcscmp(name,L"FirmwareFailedOpcode"))failed_opcode=v;
  if(!wcscmp(name,L"FirmwareResult"))fw_result=v;
  if(!wcscmp(name,L"HighSpeedResult"))high_result=v;
+ if(!wcscmp(name,L"BootPending"))boot_pending=v;
 }
 static void SwBtTraceString(const WCHAR *n,const WCHAR *v){(void)n;(void)v;}
 static void SwBtSleepMs(ULONG n){sleep_ms+=n;}
@@ -49,7 +65,28 @@ static void KeStallExecutionProcessor(ULONG n){(void)n;}
 static void SwBtFlushRx(PSWBT_DEVICE d){(void)d;}
 static void SwBtWrite(PSWBT_DEVICE d,ULONG r,ULONG v){(void)d;(void)r;(void)v;}
 static ULONG READ_REGISTER_ULONG(PULONG p){return *p;}
-static void WRITE_REGISTER_ULONG(PULONG p,ULONG v){*p=v;}
+static void WRITE_REGISTER_ULONG(PULONG p,ULONG v){
+ if(p==gpio+40){
+  ULONG previous=gpio[8],mask=(v>>8)&0xff;gpio[8]=(gpio[8]&~mask)|(v&mask);
+  if(!(previous&16)&&(gpio[8]&16)){
+   hwresets++;assert(!(gpio[8]&8));chip_baud=115200;version=0x24092000;
+   if(hardware_recovers)dead=false;
+  }
+ }else *p=v;
+}
+static PVOID MmMapIoSpaceEx(PHYSICAL_ADDRESS a,size_t n,unsigned flags){
+ (void)flags;
+ if(a.QuadPart==0x70000804){assert(n==4);return &hid;}
+ assert(a.QuadPart==0x6000d10c&&n==0xa4);return gpio;
+}
+static void MmUnmapIoSpace(PVOID p,size_t n){assert((p==&hid&&n==4)||(p==gpio&&n==0xa4));}
+static PSWBT_DEVICE SwBtGetDevice(WDFDEVICE d){return d;}
+static void WdfSpinLockAcquire(ULONG lock){(void)lock;}
+static void WdfSpinLockRelease(ULONG lock){(void)lock;}
+static void SwBtFreeKept(PSWBT_DEVICE d){(void)d;}
+static void SwBtStage(ULONG stage){(void)stage;}
+static void SwBtFlush(void){}
+
 static void SwBtUartInit(PSWBT_DEVICE d,ULONG div,ULONG mcr){(void)d;(void)mcr;host_baud=div==221?115200:3000000;}
 static void SwBtTraceVersion(PSWBT_DEVICE d,UCHAR *e,ULONG max){(void)d;(void)e;(void)max;}
 static PUCHAR SwBtLoadFirmware(PULONG n){UCHAR *b=malloc(firmware_size);assert(b);memcpy(b,firmware,firmware_size);*n=firmware_size;fw_loads++;return b;}
@@ -90,7 +127,8 @@ static ULONG SwBtPollCommand(PSWBT_DEVICE d,USHORT opcode,const UCHAR *params,UC
 '''
 tests=r'''
 static void init(SWBT_DEVICE *d) {
- memset(d,0,sizeof(*d));d->CarUartd=&car;car=0;
+ memset(d,0,sizeof(*d));d->CarUartd=&car;d->Uart=uart;car=0;
+ memset(gpio,0,sizeof(gpio));gpio[0]=gpio[4]=0x18;gpio[8]=0xf8;hid=0x2120;hwresets=boot_pending=0;hardware_recovers=true;
  host_baud=chip_baud=115200;version=0x24092000;
  patch_record=downloads=attempts=commands=fw_loads=sleep_ms=0;
  failed_record=failed_opcode=fw_result=high_result=0;
@@ -128,7 +166,29 @@ int main(void) {
  init(&d);dead=true;assert(!SwBtHighSpeed(&d,event,sizeof(event))&&high_result==4);
  init(&d);no_version=true;assert(!SwBtProbe(&d)&&downloads==0);
  init(&d);reject_address=true;assert(!SwBtProbe(&d));
- puts("PASS: patch failure/status/truncation, bounded reset recovery, retained D0 patch and verified baud fallback");
+ /* A complete healthy probe never pulses BT_REG_ON. */
+ init(&d);assert(SwBtProbeWithRecovery(&d)&&hwresets==0);
+ init(&d);dead=true;
+ assert(SwBtProbeWithRecovery(&d)&&hwresets==1&&d.FirmwareVerified);
+ assert((gpio[8]&~0x18u)==0xe0); /* unrelated pins are preserved. */
+ init(&d);dead=true;hardware_recovers=false;
+ assert(!SwBtProbeWithRecovery(&d)&&hwresets==1&&!d.FirmwareVerified);
+ init(&d);dead=true;hid=0x2100;
+ assert(!SwBtProbeWithRecovery(&d)&&hwresets==0);
+ init(&d);dead=true;gpio[4]=0;
+ assert(!SwBtProbeWithRecovery(&d)&&hwresets==0);
+ init(&d);d.D0Active=true;assert(!SwBtHardwareReset(&d)&&hwresets==0);
+ init(&d);fail_record=1;fail_once=true;
+ assert(SwBtProbeWithRecovery(&d)&&hwresets==1&&downloads==2&&d.FirmwareVerified);
+ /* A persisted old BootPending record must not gate a new D0 attempt. */
+ init(&d);boot_pending=1;
+ assert(SwBtEvtD0Entry(&d,0)==0&&d.ChipOk&&boot_pending==1);
+ assert(!d.ChildTick||d.ChildTick==10);
+ assert(SwBtEvtD0Exit(&d,0)==0&&boot_pending==0&&!d.HighSpeedNow);
+ init(&d);dead=true;hardware_recovers=false;
+ assert(SwBtEvtD0Entry(&d,0)==STATUS_DEVICE_HARDWARE_ERROR&&!d.ChipOk&&boot_pending==0);
+ puts("PASS: strict patch/baud handling, one T214 GPIO recovery, inactive-pin guards, stale-marker startup and orderly D0 cleanup");
+
 }
 '''
 with tempfile.TemporaryDirectory(prefix='switchbt-probe-') as tmp:
