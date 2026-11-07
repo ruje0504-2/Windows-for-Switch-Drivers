@@ -9,8 +9,8 @@
  *   header 1: payload size - 1
  *   header 2: (addr << 1) | READ (bit 19) | REPEAT_START (bit 16, not last)
  *   then payload words through TX_FIFO / RX_FIFO, wait PACKET_XFER_COMPLETE.
- * The bus clock divisor is the one the firmware programmed; the controller
- * clock/reset are expected to be on (UEFI uses I2C1 and I2C5).
+ * Preserve the firmware's clock source/dividers and timing. On D0 reentry,
+ * restore this controller's clock/reset and packet-mode context before SPB I/O.
  */
 #include <ntddk.h>
 #include <ntstrsafe.h>
@@ -21,6 +21,8 @@
 
 #define I2C_CNFG            0x000
 #define I2C_STATUS          0x01C
+#define I2C_SL_CNFG         0x020
+#define I2C_TLOW_SEXT       0x034
 #define I2C_TX_FIFO         0x050
 #define I2C_RX_FIFO         0x054
 #define I2C_FIFO_CONTROL    0x05C
@@ -31,9 +33,13 @@
 #define I2C_BUS_CLEAR_CONFIG 0x084
 #define I2C_BUS_CLEAR_STATUS 0x088
 #define I2C_CONFIG_LOAD     0x08C
+#define I2C_CLKEN_OVERRIDE  0x090
+#define I2C_INTERFACE_TIMING 0x094
+#define I2C_HS_TIMING       0x09C
 #define I2C_MMIO_SIZE       0x100
 
 #define CNFG_PACKET_MODE    (1u << 10)
+#define CNFG_SEND           (1u << 9)
 #define FIFO_FLUSH_TX_RX    0x3u
 #define INT_ARB_LOST        (1u << 2)
 #define INT_NO_ACK          (1u << 3)
@@ -75,9 +81,33 @@ typedef struct _RH_QUERY_CONNECTION_PROPERTIES_OUTPUT_BUFFER {
 #define I2C_SERIAL_BUS_TYPE 0x01
 #define I2C_10BIT_ADDRESS_FLAG 0x0001
 
+typedef struct _TEGRA_I2C_CLOCK {
+    ULONG Base, Source, Enable, EnableSet, EnableClear;
+    ULONG Reset, ResetSet, ResetClear, Mask;
+} TEGRA_I2C_CLOCK;
+
+/* Shared T210/B01 CAR layout, matching Hekate's clock_i2c table. Use set/clear
+ * aliases so recovery of one bus does not change another peripheral's clock. */
+static const TEGRA_I2C_CLOCK TegraI2cClocks[] = {
+    {0x7000c000,0x124,0x010,0x320,0x324,0x004,0x300,0x304,1u<<12},
+    {0x7000c400,0x198,0x014,0x328,0x32c,0x008,0x308,0x30c,1u<<22},
+    {0x7000c500,0x1b8,0x018,0x330,0x334,0x00c,0x310,0x314,1u<<3},
+    {0x7000c700,0x3c4,0x360,0x440,0x444,0x358,0x430,0x434,1u<<7},
+    {0x7000d000,0x128,0x014,0x328,0x32c,0x008,0x308,0x30c,1u<<15},
+    {0x7000d100,0x65c,0x280,0x284,0x288,0x28c,0x290,0x294,1u<<6},
+};
+static const ULONG TegraI2cContextRegisters[] = {
+    I2C_CNFG, I2C_CLK_DIVISOR, I2C_SL_CNFG, I2C_TLOW_SEXT,
+    I2C_CLKEN_OVERRIDE, I2C_INTERFACE_TIMING, I2C_HS_TIMING, I2C_FIFO_CONTROL
+};
+
 typedef struct _TEGRA_I2C_DEVICE {
     volatile UCHAR *Base;
     ULONG Length;
+    volatile UCHAR *Car;
+    const TEGRA_I2C_CLOCK *Clock;
+    ULONG SavedSource, Saved[RTL_NUMBER_OF(TegraI2cContextRegisters)];
+    BOOLEAN ContextValid, ResumePending;
     PKEVENT SdGate;
     HANDLE SdGateHandle;
     ULONG PhysLow;              /* low 32 bits of the MMIO base, for logging */
@@ -96,6 +126,7 @@ EVT_WDF_DRIVER_DEVICE_ADD TegraI2cEvtDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE TegraI2cEvtPrepareHardware;
 EVT_WDF_DEVICE_RELEASE_HARDWARE TegraI2cEvtReleaseHardware;
 EVT_WDF_DEVICE_D0_ENTRY TegraI2cEvtD0Entry;
+EVT_WDF_DEVICE_D0_EXIT TegraI2cEvtD0Exit;
 EVT_SPB_TARGET_CONNECT TegraI2cEvtTargetConnect;
 EVT_SPB_CONTROLLER_READ TegraI2cEvtRead;
 EVT_SPB_CONTROLLER_WRITE TegraI2cEvtWrite;
@@ -152,6 +183,71 @@ static BOOLEAN TegraI2cWaitClear(PTEGRA_I2C_DEVICE Dev, ULONG Off, ULONG Mask, U
         KeStallExecutionProcessor(5);
     }
     return FALSE;
+}
+
+static ULONG TegraI2cReadClock(PTEGRA_I2C_DEVICE Dev, ULONG Offset)
+{
+    return READ_REGISTER_ULONG((PULONG)(Dev->Car + Offset));
+}
+static VOID TegraI2cWriteClock(PTEGRA_I2C_DEVICE Dev, ULONG Offset, ULONG Value)
+{
+    WRITE_REGISTER_ULONG((PULONG)(Dev->Car + Offset), Value);
+}
+
+/* Caller owns the I2C5/SD gate, and SpbCx has quiesced this controller. */
+static NTSTATUS TegraI2cSaveContext(PTEGRA_I2C_DEVICE Dev)
+{
+    Dev->ContextValid = FALSE;
+    if (!Dev->Clock || !Dev->Car || !Dev->Base) return STATUS_DEVICE_NOT_READY;
+    if (!(TegraI2cReadClock(Dev, Dev->Clock->Enable) & Dev->Clock->Mask) ||
+        (TegraI2cReadClock(Dev, Dev->Clock->Reset) & Dev->Clock->Mask))
+        return STATUS_DEVICE_NOT_READY;
+    if (!TegraI2cWaitClear(Dev, I2C_STATUS, 0x100, 20000)) return STATUS_DEVICE_BUSY;
+    Dev->SavedSource = TegraI2cReadClock(Dev, Dev->Clock->Source);
+    for (ULONG i = 0; i < RTL_NUMBER_OF(TegraI2cContextRegisters); ++i)
+        Dev->Saved[i] = RdReg(Dev, TegraI2cContextRegisters[i]);
+    Dev->ContextValid = TRUE;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS TegraI2cRestoreContext(PTEGRA_I2C_DEVICE Dev)
+{
+    const TEGRA_I2C_CLOCK *Clock = Dev->Clock;
+    if (!Dev->ContextValid || !Clock || !Dev->Car || !Dev->Base)
+        return STATUS_DEVICE_NOT_READY;
+    if (Dev->ResumePending) {
+        /* Switchroot enables the bus clock and resets the controller before
+         * reinitializing packet mode. This preserves the inherited source;
+         * platform/firmware restoration owns its parent PLL and oscillator. */
+        TegraI2cWriteClock(Dev, Clock->ResetSet, Clock->Mask);
+        TegraI2cWriteClock(Dev, Clock->EnableClear, Clock->Mask);
+        TegraI2cWriteClock(Dev, Clock->Source, Dev->SavedSource);
+        TegraI2cWriteClock(Dev, Clock->EnableSet, Clock->Mask);
+        KeStallExecutionProcessor(2);
+        TegraI2cWriteClock(Dev, Clock->ResetClear, Clock->Mask);
+        KeStallExecutionProcessor(2);
+    }
+    if (!(TegraI2cReadClock(Dev, Clock->Enable) & Clock->Mask) ||
+        (TegraI2cReadClock(Dev, Clock->Reset) & Clock->Mask) ||
+        TegraI2cReadClock(Dev, Clock->Source) != Dev->SavedSource)
+        return STATUS_DEVICE_POWER_FAILURE;
+
+    /* Never replay FIFO payloads, command addresses or a pending SEND bit.
+     * Only stable timing/configuration is restored; this driver polls IRQs. */
+    WrReg(Dev, I2C_INT_MASK, 0);
+    for (ULONG i = 0; i < RTL_NUMBER_OF(TegraI2cContextRegisters); ++i) {
+        ULONG Register = TegraI2cContextRegisters[i], Value = Dev->Saved[i];
+        if (Register == I2C_CNFG) Value = (Value & ~CNFG_SEND) | CNFG_PACKET_MODE;
+        if (Register == I2C_FIFO_CONTROL) Value &= ~FIFO_FLUSH_TX_RX;
+        WrReg(Dev, Register, Value);
+    }
+    WrReg(Dev, I2C_CONFIG_LOAD, CONFIG_LOAD_ALL);
+    if (!TegraI2cWaitClear(Dev, I2C_CONFIG_LOAD, 1, 10000)) return STATUS_IO_TIMEOUT;
+    WrReg(Dev, I2C_INT_STATUS, 0xFFFFFFFF);
+    WrReg(Dev, I2C_FIFO_CONTROL, RdReg(Dev, I2C_FIFO_CONTROL) | FIFO_FLUSH_TX_RX);
+    if (!TegraI2cWaitClear(Dev, I2C_FIFO_CONTROL, FIFO_FLUSH_TX_RX, 10000)) return STATUS_IO_TIMEOUT;
+    Dev->ResumePending = FALSE;
+    return STATUS_SUCCESS;
 }
 
 static VOID TegraI2cLoadConfig(PTEGRA_I2C_DEVICE Dev)
@@ -252,12 +348,10 @@ Error:
     if ((Status & INT_NO_ACK) != 0) {
         InterlockedIncrement(&Dev->Nacks);
         TegraI2cResetFifos(Dev);
-        TegraI2cTraceErrors(Dev);
         return STATUS_NO_SUCH_DEVICE;
     }
     TegraI2cResetFifos(Dev);
     TegraI2cBusClear(Dev);
-    TegraI2cTraceErrors(Dev);
     return STATUS_IO_DEVICE_ERROR;
 
 Timeout:
@@ -265,7 +359,6 @@ Timeout:
     InterlockedExchange(&Dev->LastAddress, Address);
     TegraI2cResetFifos(Dev);
     TegraI2cBusClear(Dev);
-    TegraI2cTraceErrors(Dev);
     return STATUS_IO_TIMEOUT;
 }
 
@@ -342,6 +435,8 @@ static VOID TegraI2cRunRequest(WDFDEVICE Controller, SPBTARGET Target, SPBREQUES
         ExFreePoolWithTag(Bounce, 'c2iT');
     }
     TegraI2c5Release(Dev->SdGate);
+    /* Registry writes may need SD I/O; do not hold its PMIC gate here. */
+    if (!NT_SUCCESS(Status)) TegraI2cTraceErrors(Dev);
     WdfRequestSetInformation((WDFREQUEST)Request, Total);
     SpbRequestComplete(Request, Status);
 }
@@ -436,31 +531,32 @@ NTSTATUS TegraI2cEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRES
     if (Dev->Base == NULL) {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
+    for (Index = 0; Index < RTL_NUMBER_OF(TegraI2cClocks); ++Index)
+        if (TegraI2cClocks[Index].Base == Dev->PhysLow) Dev->Clock = &TegraI2cClocks[Index];
+    if (Dev->Clock == NULL) return STATUS_DEVICE_CONFIGURATION_ERROR;
+    PHYSICAL_ADDRESS CarAddress;
+    CarAddress.QuadPart = 0x60006000;
+    Dev->Car = MmMapIoSpaceEx(CarAddress, 0x1000, PAGE_READWRITE | PAGE_NOCACHE);
+    if (Dev->Car == NULL) return STATUS_INSUFFICIENT_RESOURCES;
     if (Dev->PhysLow == 0x7000d000 && Dev->SdGate == NULL) {
         Dev->SdGate = TegraI2c5OpenGate(&Dev->SdGateHandle);
         if (Dev->SdGate == NULL) return STATUS_INSUFFICIENT_RESOURCES;
     }
     NTSTATUS GateStatus = TegraI2c5Acquire(Dev->SdGate);
     if (!NT_SUCCESS(GateStatus)) return GateStatus;
-    TegraI2cTrace(Dev, L"ResourceCount", Count);
-    TegraI2cTrace(Dev, L"CnfgBefore", RdReg(Dev, I2C_CNFG));
-    TegraI2cTrace(Dev, L"ClkDivisor", RdReg(Dev, I2C_CLK_DIVISOR));
-
-    /* Packet mode, interrupts masked (version 1 polls). */
-    WrReg(Dev, I2C_INT_MASK, 0);
-    WrReg(Dev, I2C_CNFG, RdReg(Dev, I2C_CNFG) | CNFG_PACKET_MODE);
-    TegraI2cLoadConfig(Dev);
-    TegraI2cResetFifos(Dev);
-    TegraI2cTrace(Dev, L"CnfgAfter", RdReg(Dev, I2C_CNFG));
+    NTSTATUS Status = TegraI2cSaveContext(Dev);
+    Dev->ResumePending = FALSE;
     TegraI2c5Release(Dev->SdGate);
-
-    return STATUS_SUCCESS;
+    TegraI2cTrace(Dev, L"ResourceCount", Count);
+    return Status;
 }
 
 NTSTATUS TegraI2cEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
 {
     PTEGRA_I2C_DEVICE Dev = TegraI2cGetDevice(Device);
     UNREFERENCED_PARAMETER(Translated);
+    Dev->ContextValid = Dev->ResumePending = FALSE;
+    Dev->Clock = NULL;
     if (Dev->SdGateHandle != NULL) {
         ZwClose(Dev->SdGateHandle); Dev->SdGateHandle = NULL; Dev->SdGate = NULL;
     }
@@ -468,38 +564,37 @@ NTSTATUS TegraI2cEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
         MmUnmapIoSpace((PVOID)Dev->Base, Dev->Length);
         Dev->Base = NULL;
     }
-    return STATUS_SUCCESS;
-}
-
-/* Self-test: read one register from a known chip on this bus (read-only). */
-static VOID TegraI2cSelfTest(PTEGRA_I2C_DEVICE Dev, USHORT Address, UCHAR Register, PCWSTR Name)
-{
-    UCHAR Value = 0;
-    NTSTATUS Status = TegraI2cTransfer(Dev, Address, FALSE, &Register, 1, TRUE);
-    if (NT_SUCCESS(Status)) {
-        Status = TegraI2cTransfer(Dev, Address, TRUE, &Value, 1, FALSE);
+    if (Dev->Car != NULL) {
+        MmUnmapIoSpace((PVOID)Dev->Car, 0x1000);
+        Dev->Car = NULL;
     }
-    TegraI2cTrace(Dev, Name, NT_SUCCESS(Status) ? (0x100u | Value) : (ULONG)Status);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS TegraI2cEvtD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState)
 {
     PTEGRA_I2C_DEVICE Dev = TegraI2cGetDevice(Device);
     UNREFERENCED_PARAMETER(PreviousState);
-    NTSTATUS GateStatus = TegraI2c5Acquire(Dev->SdGate);
-    if (!NT_SUCCESS(GateStatus)) return GateStatus;
-    /* Value 0x1XX = success with register value XX, otherwise the NTSTATUS. */
-    if (Dev->PhysLow == 0x7000C000) {
-        TegraI2cSelfTest(Dev, 0x4C, 0x00, L"SelfTest_TMP451_Local");    /* board temperature, C */
-        TegraI2cSelfTest(Dev, 0x4C, 0x01, L"SelfTest_TMP451_Remote");   /* SoC temperature, C */
-        TegraI2cSelfTest(Dev, 0x6B, 0x0A, L"SelfTest_BQ24193_Rev");     /* expect 0x2F */
-    } else if (Dev->PhysLow == 0x7000D000) {
-        TegraI2cSelfTest(Dev, 0x3C, 0x15, L"SelfTest_MAX77620_OnOffStat");
-        TegraI2cSelfTest(Dev, 0x1B, 0x00, L"SelfTest_MAX77621_Vout");   /* CPU rail, expect 0xC3 after R365 */
-    }
+    NTSTATUS Status = TegraI2c5Acquire(Dev->SdGate);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = TegraI2cRestoreContext(Dev);
     TegraI2c5Release(Dev->SdGate);
-    TegraI2cTrace(Dev, L"D0EntryDone", 1);
-    return STATUS_SUCCESS;
+    return Status;
+}
+
+NTSTATUS TegraI2cEvtD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE TargetState)
+{
+    PTEGRA_I2C_DEVICE Dev = TegraI2cGetDevice(Device);
+    if (TargetState == WdfPowerDeviceD3Final) {
+        Dev->ContextValid = Dev->ResumePending = FALSE;
+        return STATUS_SUCCESS;
+    }
+    NTSTATUS Status = TegraI2c5Acquire(Dev->SdGate);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = TegraI2cSaveContext(Dev);
+    Dev->ResumePending = NT_SUCCESS(Status);
+    TegraI2c5Release(Dev->SdGate);
+    return Status;
 }
 
 NTSTATUS TegraI2cEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
@@ -519,6 +614,7 @@ NTSTATUS TegraI2cEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
     Pnp.EvtDevicePrepareHardware = TegraI2cEvtPrepareHardware;
     Pnp.EvtDeviceReleaseHardware = TegraI2cEvtReleaseHardware;
     Pnp.EvtDeviceD0Entry = TegraI2cEvtD0Entry;
+    Pnp.EvtDeviceD0Exit = TegraI2cEvtD0Exit;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &Pnp);
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&Attributes, TEGRA_I2C_DEVICE);
@@ -552,7 +648,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&TegraI2cParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, TegraI2cParamsPath);
     }
-    TegraI2cTrace(NULL, L"DriverVersion", 5);
+    TegraI2cTrace(NULL, L"DriverVersion", 6);
 
     WDF_DRIVER_CONFIG_INIT(&Config, TegraI2cEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);

@@ -62,6 +62,22 @@ is not installed and does not by itself implement SC7.
 python3 drivers/Tegra210Gpio/tests/test-context.py
 ```
 
+I2C **1.0.0.6** captures the inherited clock source, divisors and stable bus
+timing before leaving D0. Reentry restores only that controller's CAR
+clock/reset bits, then initializes packet mode and checks configuration/FIFO
+completion. It never replays command addresses, FIFO data or a pending SEND
+bit. I2C5 restoration uses the existing SD/PMIC gate. Error diagnostics run
+after releasing that gate, and the old device-register self-tests were removed
+from D0 entry. ARM64 build, signed catalog checks and actual callbacks covering
+all six controller routes, repeated context loss and bounded failures pass.
+The candidate is not installed. It restores the inherited clock selector;
+complete SC7 still requires platform restoration of its parent clocks.
+[Switchroot I2C resume](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/i2c/busses/i2c-tegra.c#L2698)
+
+```sh
+python3 drivers/Tegra210I2c/tests/test-context.py
+```
+
 Power-button **1.0.0.3** distinguishes HID System Power Down from System Wake
 Up using the console display state. The passive-IRQ path unmasks only the
 press edge and sends a complete report/release pair, so releasing the sleep
