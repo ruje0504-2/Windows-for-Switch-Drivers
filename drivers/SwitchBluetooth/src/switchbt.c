@@ -126,6 +126,10 @@
  * Bluetooth on every later boot. Clear it on orderly D0 exit. On T214, one
  * failed probe may reset PH4/BT_REG_ON before a complete fresh retry, with
  * UART interrupts disabled. Wi-Fi power and the shared 32 kHz clock stay on.
+ *
+ * 1.0.0.19: restore UART-D's CAR enable/reset before touching UART registers
+ * after D0 context loss. Require the boot PLLP parent to be enabled/locked,
+ * use only UART-D set/clear bits and retain the bounded chip recovery above.
  */
 #include <ntddk.h>
 #include <ntstrsafe.h>
@@ -157,6 +161,16 @@ NTSYSAPI ULONG NTAPI RtlRandomEx(PULONG Seed);     /* ntoskrnl export, declared 
 #define UART_DIV_115200   221u          /* 408 MHz / 16 / 221 = 115384 baud (UEFI R390) */
 #define UART_DIV_3M       1u            /* not counted while the CAR override is on */
 #define CAR_UARTD_SOURCE  0x600061C0u   /* CLK_SOURCE_UARTD */
+#define CAR_BASE          0x60006000u
+#define CAR_LENGTH        0x1000u
+#define CAR_PLLP_BASE     0x0A0u
+#define CAR_CLOCK_U       0x018u
+#define CAR_RESET_U       0x00Cu
+#define CAR_CLOCK_U_SET   0x330u
+#define CAR_RESET_U_SET   0x310u
+#define CAR_RESET_U_CLEAR 0x314u
+#define CAR_UARTD_BIT     (1u << 1)
+#define CAR_PLLP_READY    ((1u << 30) | (1u << 27))
 #define CAR_UART_PLLP     0x00000000u   /* PLLP 408 MHz, the UART divisor counts */
 #define CAR_UART_3M       ((1u << 24) | 15u)   /* override: 2 x 408 / (15 + 2) = 48 MHz = 16 x 3 Mbaud */
 #define UART_MCR_RTS      0x02u
@@ -236,6 +250,8 @@ static VOID SwBtDoneFlush(PSWBT_DONE Done)
 typedef struct _SWBT_DEVICE {
     volatile ULONG *Uart;
     volatile ULONG *CarUartd;       /* CLK_SOURCE_UARTD, so the driver sets the UART clock */
+    volatile ULONG *Car;
+    volatile BOOLEAN HostReady;
     WDFINTERRUPT Interrupt;
     BOOLEAN ChipOk;
     BOOLEAN D0Active;               /* protected by Lock; interrupt connected */
@@ -399,6 +415,36 @@ static BOOLEAN SwBtReadParam(PCWSTR Name, PULONG Value)
 }
 
 /* ------------------------------------------------------------------ UART */
+
+static NTSTATUS SwBtPrepareHost(PSWBT_DEVICE Dev)
+{
+    if (Dev->D0Active) return STATUS_INVALID_DEVICE_STATE;
+    Dev->HostReady = FALSE;
+    if (Dev->Uart == NULL || Dev->Car == NULL || Dev->CarUartd == NULL)
+        return STATUS_DEVICE_NOT_READY;
+    /* Switchroot's resume enables the UART clock/reset before UART restore.
+     * Warmboot/platform code owns the shared PLLP; never retune it here. */
+    ULONG Pll = READ_REGISTER_ULONG((PULONG)&Dev->Car[CAR_PLLP_BASE / 4]);
+    if ((Pll & CAR_PLLP_READY) != CAR_PLLP_READY) return STATUS_DEVICE_POWER_FAILURE;
+    ULONG Enable = READ_REGISTER_ULONG((PULONG)&Dev->Car[CAR_CLOCK_U / 4]);
+    ULONG Reset = READ_REGISTER_ULONG((PULONG)&Dev->Car[CAR_RESET_U / 4]);
+    if (!(Enable & CAR_UARTD_BIT) || (Reset & CAR_UARTD_BIT)) {
+        /* Transport/interrupts are stopped. Recover only UART-D and start
+         * with the existing 408-MHz divisor path; the probe negotiates baud. */
+        WRITE_REGISTER_ULONG((PULONG)&Dev->Car[CAR_RESET_U_SET / 4], CAR_UARTD_BIT);
+        WRITE_REGISTER_ULONG((PULONG)Dev->CarUartd, CAR_UART_PLLP);
+        WRITE_REGISTER_ULONG((PULONG)&Dev->Car[CAR_CLOCK_U_SET / 4], CAR_UARTD_BIT);
+        KeStallExecutionProcessor(2);
+        if (!(READ_REGISTER_ULONG((PULONG)&Dev->Car[CAR_CLOCK_U / 4]) & CAR_UARTD_BIT))
+            return STATUS_DEVICE_POWER_FAILURE;
+        WRITE_REGISTER_ULONG((PULONG)&Dev->Car[CAR_RESET_U_CLEAR / 4], CAR_UARTD_BIT);
+        KeStallExecutionProcessor(2);
+        if (READ_REGISTER_ULONG((PULONG)&Dev->Car[CAR_RESET_U / 4]) & CAR_UARTD_BIT)
+            return STATUS_DEVICE_POWER_FAILURE;
+    }
+    Dev->HostReady = TRUE;
+    return STATUS_SUCCESS;
+}
 
 static ULONG SwBtRead(PSWBT_DEVICE Dev, ULONG Reg)
 {
@@ -975,6 +1021,7 @@ NTSTATUS SwBtEvtInterruptEnable(WDFINTERRUPT Interrupt, WDFDEVICE AssociatedDevi
 {
     PSWBT_DEVICE Dev = SwBtGetDevice(AssociatedDevice);
     UNREFERENCED_PARAMETER(Interrupt);
+    if (!Dev->HostReady) return STATUS_DEVICE_NOT_READY;
     Dev->RxHead = Dev->RxTail = 0;
     Dev->TxBusy = Dev->TxDone = FALSE;
     Dev->Ier = !Dev->ChipOk ? 0 : UART_IER_RX;
@@ -987,7 +1034,7 @@ NTSTATUS SwBtEvtInterruptDisable(WDFINTERRUPT Interrupt, WDFDEVICE AssociatedDev
     PSWBT_DEVICE Dev = SwBtGetDevice(AssociatedDevice);
     UNREFERENCED_PARAMETER(Interrupt);
     Dev->Ier = 0;
-    SwBtWrite(Dev, UART_IER, 0);
+    if (Dev->HostReady) SwBtWrite(Dev, UART_IER, 0);
     return STATUS_SUCCESS;
 }
 
@@ -1516,7 +1563,7 @@ NTSTATUS SwBtEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIST
     for (Index = 0; Index < Count; ++Index) {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = WdfCmResourceListGetDescriptor(Translated, Index);
         if (Desc != NULL && Desc->Type == CmResourceTypeMemory && Dev->Uart == NULL) {
-            if (Desc->u.Memory.Length < UART_LENGTH) {
+            if (Desc->u.Memory.Length < UART_LENGTH || Desc->u.Memory.Start.QuadPart != 0x70006300) {
                 return STATUS_DEVICE_CONFIGURATION_ERROR;
             }
             Dev->Uart = (volatile ULONG *)MmMapIoSpaceEx(Desc->u.Memory.Start, UART_LENGTH, PAGE_READWRITE | PAGE_NOCACHE);
@@ -1526,14 +1573,16 @@ NTSTATUS SwBtEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIST
         }
     }
     SwBtTrace(L"HaveUart", Dev->Uart != NULL);
-    if (Dev->Uart != NULL && Dev->CarUartd == NULL) {
+    if (Dev->Uart != NULL && Dev->Car == NULL) {
         PHYSICAL_ADDRESS Car;
-        Car.QuadPart = CAR_UARTD_SOURCE;
-        Dev->CarUartd = (volatile ULONG *)MmMapIoSpaceEx(Car, sizeof(ULONG), PAGE_READWRITE | PAGE_NOCACHE);
+        Car.QuadPart = CAR_BASE;
+        Dev->Car = (volatile ULONG *)MmMapIoSpaceEx(Car, CAR_LENGTH, PAGE_READWRITE | PAGE_NOCACHE);
+        if (Dev->Car != NULL) Dev->CarUartd = &Dev->Car[(CAR_UARTD_SOURCE - CAR_BASE) / 4];
     }
     SwBtTrace(L"HaveCar", Dev->CarUartd != NULL);
     SwBtStage(3);
-    return Dev->Uart == NULL ? STATUS_DEVICE_CONFIGURATION_ERROR : STATUS_SUCCESS;
+    if (Dev->Uart == NULL) return STATUS_DEVICE_CONFIGURATION_ERROR;
+    return Dev->Car == NULL ? STATUS_INSUFFICIENT_RESOURCES : STATUS_SUCCESS;
 }
 
 NTSTATUS SwBtEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
@@ -1544,13 +1593,15 @@ NTSTATUS SwBtEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
     WdfSpinLockAcquire(Dev->Lock);
     SwBtFreeKept(Dev);
     WdfSpinLockRelease(Dev->Lock);
+    Dev->HostReady = FALSE;
     if (Dev->Uart != NULL) {
         MmUnmapIoSpace((PVOID)Dev->Uart, UART_LENGTH);
         Dev->Uart = NULL;
     }
-    if (Dev->CarUartd != NULL) {
-        MmUnmapIoSpace((PVOID)Dev->CarUartd, sizeof(ULONG));
-        Dev->CarUartd = NULL;
+    Dev->CarUartd = NULL;
+    if (Dev->Car != NULL) {
+        MmUnmapIoSpace((PVOID)Dev->Car, CAR_LENGTH);
+        Dev->Car = NULL;
     }
     return STATUS_SUCCESS;
 }
@@ -1570,7 +1621,8 @@ NTSTATUS SwBtEvtD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE TargetState)
     /* An orderly stop is not an unfinished boot, even before child creation. */
     Dev->BootGuardPending = FALSE;
     SwBtTrace(L"BootPending", 0);
-    if (Dev->Uart == NULL || Dev->CarUartd == NULL || !Dev->HighSpeedNow) {
+    if (!Dev->HostReady || Dev->Uart == NULL || Dev->CarUartd == NULL || !Dev->HighSpeedNow) {
+        Dev->HostReady = FALSE;
         SwBtFlush();
         return STATUS_SUCCESS;
     }
@@ -1581,6 +1633,7 @@ NTSTATUS SwBtEvtD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE TargetState)
     SwBtUartInit(Dev, UART_DIV_115200, UART_MCR_RTS);
     Dev->HighSpeedNow = FALSE;
     SwBtTrace(L"ExitTo115200", Length >= 7 ? Event[6] + 0x100u : 0);
+    Dev->HostReady = FALSE;
     SwBtFlush();
     return STATUS_SUCCESS;
 }
@@ -1612,6 +1665,16 @@ NTSTATUS SwBtEvtD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState)
     PSWBT_DEVICE Dev = SwBtGetDevice(Device);
     UNREFERENCED_PARAMETER(PreviousState);
 
+    NTSTATUS Status = SwBtPrepareHost(Dev);
+    SwBtTrace(L"HostResumeStatus", (ULONG)Status);
+    if (!NT_SUCCESS(Status)) {
+        WdfSpinLockAcquire(Dev->Lock);
+        Dev->ChipOk = FALSE;
+        WdfSpinLockRelease(Dev->Lock);
+        Dev->BootGuardPending = FALSE;
+        SwBtTrace(L"BootPending", 0);
+        return Status;
+    }
     Dev->BootGuardPending = TRUE;
     SwBtTrace(L"BootPending", 1);
     SwBtStart(Dev);
@@ -1823,7 +1886,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwBtParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwBtParamsPath);
     }
-    SwBtTrace(L"DriverVersion", 18);
+    SwBtTrace(L"DriverVersion", 19);
     WDF_DRIVER_CONFIG_INIT(&Config, SwBtEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);
 }

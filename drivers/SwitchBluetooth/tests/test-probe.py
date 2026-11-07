@@ -3,7 +3,7 @@
 from pathlib import Path
 import os, re, subprocess, tempfile
 source = (Path(__file__).resolve().parents[1] / 'src/switchbt.c').read_text()
-names = ('SwBtReset', 'SwBtReadVersion', 'SwBtPatchram', 'SwBtHighSpeed', 'SwBtProbe', 'SwBtHardwareReset', 'SwBtProbeWithRecovery', 'SwBtStart', 'SwBtEvtD0Entry', 'SwBtEvtD0Exit')
+names = ('SwBtPrepareHost', 'SwBtReset', 'SwBtReadVersion', 'SwBtPatchram', 'SwBtHighSpeed', 'SwBtProbe', 'SwBtHardwareReset', 'SwBtProbeWithRecovery', 'SwBtStart', 'SwBtEvtD0Entry', 'SwBtEvtD0Exit', 'SwBtEvtInterruptEnable', 'SwBtEvtInterruptDisable')
 functions = []
 for name in names:
     m = re.search(r'^(?:static )?(?:BOOLEAN|ULONG|VOID|NTSTATUS) ' + name + r'\([^;{]*\)\s*\{', source, re.M)
@@ -12,7 +12,7 @@ for name in names:
     while depth:
         depth += (source[b]=='{')-(source[b]=='}'); b+=1
     functions.append(source[m.start():b])
-constants='\n'.join(line for line in source.splitlines() if re.match(r'#define (?:UART_MCR_|UART_DIV_|CAR_UART_|BCM_|HCI_(?:RESET|READ_))',line))
+constants='\n'.join(line for line in source.splitlines() if re.match(r'#define (?:UART_MCR_|UART_DIV_|CAR_|BCM_|HCI_(?:RESET|READ_))',line))
 preamble=r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -36,18 +36,26 @@ typedef struct { uint64_t QuadPart; } PHYSICAL_ADDRESS;
 #define PAGE_READWRITE 2
 #define PAGE_NOCACHE 4
 #define UART_IER 1
+#define UART_IER_RX 0x15
 #define CHILD_DELAY_TICKS 10
 #define UNREFERENCED_PARAMETER(x) ((void)(x))
 #define STATUS_SUCCESS 0
 #define STATUS_DEVICE_HARDWARE_ERROR -1
+#define STATUS_DEVICE_NOT_READY -2
+#define STATUS_DEVICE_POWER_FAILURE -3
+#define STATUS_INVALID_DEVICE_STATE -4
+#define NT_SUCCESS(s) ((s)>=0)
 typedef int NTSTATUS,WDF_POWER_DEVICE_STATE;
-struct DEVICE { volatile ULONG *CarUartd,*Uart; BOOLEAN HighSpeedNow,FirmwareVerified,D0Active,ChipOk,BootGuardPending; ULONG FirmwareVersion,Lock,RxGot,ChildTick,Ticks; UCHAR BdAddr[6]; };
-typedef struct DEVICE *WDFDEVICE;
+struct DEVICE { volatile ULONG *CarUartd,*Uart,*Car; BOOLEAN HostReady,HighSpeedNow,FirmwareVerified,D0Active,ChipOk,BootGuardPending,TxBusy,TxDone; ULONG FirmwareVersion,Lock,RxGot,ChildTick,Ticks,RxHead,RxTail,Ier; UCHAR BdAddr[6]; };
+typedef struct DEVICE *WDFDEVICE,*WDFINTERRUPT;
 static ULONG gpio[41],hid=0x2120,uart[16],hwresets,boot_pending;
 static bool hardware_recovers;
 
 typedef struct DEVICE SWBT_DEVICE,*PSWBT_DEVICE;
-static ULONG car,host_baud,chip_baud,version,patch_record,downloads,attempts,commands;
+static ULONG car_regs[CAR_LENGTH/4],clock_ops,uart_writes;
+#define car (car_regs[(CAR_UARTD_SOURCE-CAR_BASE)/4])
+static bool clock_blocked,reset_blocked;
+static ULONG host_baud,chip_baud,version,patch_record,downloads,attempts,commands;
 static ULONG failed_record,failed_opcode,fw_result,high_result;
 static bool dead,reset_recovers,fail_once,bad_status,baud_reject,baud_lost_reply;
 static bool reject_address,no_version; static int fail_record; static unsigned fw_loads;
@@ -63,7 +71,7 @@ static void SwBtTraceString(const WCHAR *n,const WCHAR *v){(void)n;(void)v;}
 static void SwBtSleepMs(ULONG n){sleep_ms+=n;}
 static void KeStallExecutionProcessor(ULONG n){(void)n;}
 static void SwBtFlushRx(PSWBT_DEVICE d){(void)d;}
-static void SwBtWrite(PSWBT_DEVICE d,ULONG r,ULONG v){(void)d;(void)r;(void)v;}
+static void SwBtWrite(PSWBT_DEVICE d,ULONG r,ULONG v){assert(d->HostReady);(void)r;(void)v;uart_writes++;}
 static ULONG READ_REGISTER_ULONG(PULONG p){return *p;}
 static void WRITE_REGISTER_ULONG(PULONG p,ULONG v){
  if(p==gpio+40){
@@ -72,6 +80,13 @@ static void WRITE_REGISTER_ULONG(PULONG p,ULONG v){
    hwresets++;assert(!(gpio[8]&8));chip_baud=115200;version=0x24092000;
    if(hardware_recovers)dead=false;
   }
+ }else if((uintptr_t)p>=(uintptr_t)car_regs&&(uintptr_t)p<(uintptr_t)(car_regs+CAR_LENGTH/4)) {
+  ULONG off=(ULONG)((UCHAR *)p-(UCHAR *)car_regs);
+  if(p==&car){*p=v;return;}
+  assert(v==CAR_UARTD_BIT);clock_ops++;
+  if(off==CAR_RESET_U_SET)car_regs[CAR_RESET_U/4]|=v;
+  else if(off==CAR_RESET_U_CLEAR){if(!reset_blocked)car_regs[CAR_RESET_U/4]&=~v;}
+  else {assert(off==CAR_CLOCK_U_SET);if(!clock_blocked)car_regs[CAR_CLOCK_U/4]|=v;}
  }else *p=v;
 }
 static PVOID MmMapIoSpaceEx(PHYSICAL_ADDRESS a,size_t n,unsigned flags){
@@ -127,7 +142,10 @@ static ULONG SwBtPollCommand(PSWBT_DEVICE d,USHORT opcode,const UCHAR *params,UC
 '''
 tests=r'''
 static void init(SWBT_DEVICE *d) {
- memset(d,0,sizeof(*d));d->CarUartd=&car;d->Uart=uart;car=0;
+ memset(d,0,sizeof(*d));memset(car_regs,0,sizeof(car_regs));
+ d->Car=car_regs;d->CarUartd=&car;d->Uart=uart;d->HostReady=true;
+ car_regs[CAR_PLLP_BASE/4]=CAR_PLLP_READY;car_regs[CAR_CLOCK_U/4]=0x82;car_regs[CAR_RESET_U/4]=0xa0;
+ clock_ops=uart_writes=0;clock_blocked=reset_blocked=false;
  memset(gpio,0,sizeof(gpio));gpio[0]=gpio[4]=0x18;gpio[8]=0xf8;hid=0x2120;hwresets=boot_pending=0;hardware_recovers=true;
  host_baud=chip_baud=115200;version=0x24092000;
  patch_record=downloads=attempts=commands=fw_loads=sleep_ms=0;
@@ -183,16 +201,42 @@ int main(void) {
  /* A persisted old BootPending record must not gate a new D0 attempt. */
  init(&d);boot_pending=1;
  assert(SwBtEvtD0Entry(&d,0)==0&&d.ChipOk&&boot_pending==1);
+ assert(d.HostReady&&clock_ops==0); /* Healthy cold entry leaves CAR gates alone. */
  assert(!d.ChildTick||d.ChildTick==10);
- assert(SwBtEvtD0Exit(&d,0)==0&&boot_pending==0&&!d.HighSpeedNow);
+ assert(SwBtEvtD0Exit(&d,0)==0&&boot_pending==0&&!d.HighSpeedNow&&!d.HostReady);
+ /* Three independent host-context losses recover before HCI probing. */
+ for(unsigned cycle=0;cycle<3;cycle++) {
+  car_regs[CAR_CLOCK_U/4]&=~CAR_UARTD_BIT;car_regs[CAR_RESET_U/4]|=CAR_UARTD_BIT;
+  assert(SwBtEvtD0Entry(&d,3)==0&&d.ChipOk&&d.HostReady&&downloads==1);
+  assert(clock_ops==3*(cycle+1)&&car_regs[CAR_CLOCK_U/4]==0x82&&car_regs[CAR_RESET_U/4]==0xa0);
+  assert(car_regs[CAR_PLLP_BASE/4]==CAR_PLLP_READY&&hwresets==0);
+  assert(SwBtEvtInterruptEnable(&d,&d)==0&&d.Ier==UART_IER_RX);
+  assert(SwBtEvtInterruptDisable(&d,&d)==0&&d.Ier==0);
+  assert(SwBtEvtD0Exit(&d,3)==0&&!d.HostReady);
+ }
+ /* Do not touch an inaccessible UART, retry firmware or claim a radio. */
+ init(&d);d.ChipOk=true;car_regs[CAR_PLLP_BASE/4]=1u<<30;
+ assert(SwBtEvtD0Entry(&d,3)==STATUS_DEVICE_POWER_FAILURE&&!d.ChipOk&&!d.HostReady);
+ assert(commands==0&&uart_writes==0&&hwresets==0&&clock_ops==0&&boot_pending==0);
+ assert(SwBtEvtInterruptEnable(&d,&d)==STATUS_DEVICE_NOT_READY);
+ assert(SwBtEvtInterruptDisable(&d,&d)==0&&uart_writes==0);
+ for(unsigned i=0;i<2;i++) {
+  init(&d);car_regs[CAR_CLOCK_U/4]&=~CAR_UARTD_BIT;
+  clock_blocked=(i==0);reset_blocked=(i==1);
+  assert(SwBtEvtD0Entry(&d,3)==STATUS_DEVICE_POWER_FAILURE&&!d.HostReady&&!d.ChipOk);
+  assert(commands==0&&uart_writes==0&&hwresets==0);
+  assert(SwBtEvtD0Exit(&d,3)==0&&uart_writes==0);
+ }
+ init(&d);d.D0Active=true;
+ assert(SwBtPrepareHost(&d)==STATUS_INVALID_DEVICE_STATE&&d.HostReady&&clock_ops==0);
  init(&d);dead=true;hardware_recovers=false;
  assert(SwBtEvtD0Entry(&d,0)==STATUS_DEVICE_HARDWARE_ERROR&&!d.ChipOk&&boot_pending==0);
- puts("PASS: strict patch/baud handling, one T214 GPIO recovery, inactive-pin guards, stale-marker startup and orderly D0 cleanup");
+ puts("PASS: UART clock/reset recovery, inaccessible-host rejection, strict patch/baud handling, bounded GPIO retry and D0 cleanup");
 
 }
 '''
 with tempfile.TemporaryDirectory(prefix='switchbt-probe-') as tmp:
  c=Path(tmp)/'test.c';exe=Path(tmp)/'test'
- c.write_text(preamble+constants+'\n'+model+'\n'.join(functions)+tests)
+ c.write_text(constants+'\n'+preamble+model+'\n'.join(functions)+tests)
  subprocess.run([os.environ.get('CC','clang'),'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-g',str(c),'-o',str(exe)],check=True)
  subprocess.run([str(exe)],check=True)
