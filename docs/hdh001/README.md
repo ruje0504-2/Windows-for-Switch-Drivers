@@ -62,7 +62,18 @@ is not installed and does not by itself implement SC7.
 python3 drivers/Tegra210Gpio/tests/test-context.py
 ```
 
-The current candidate pairs fan **1.0.0.7**, power button **1.0.0.2**, RTC
+Power-button **1.0.0.3** distinguishes HID System Power Down from System Wake
+Up using the console display state. The passive-IRQ path unmasks only the
+press edge and sends a complete report/release pair, so releasing the sleep
+button does not create another PMIC wake interrupt. IRQ diagnostics are
+deferred outside the passive interrupt lock; D0/suspend callbacks do not write
+the registry. The older polling profile also selects the wake report when
+the display is off. ARM64 compilation, signing and actual-callback tests for
+rapid cycles, short presses and PMIC mask preservation pass. This candidate
+is not installed; repeated physical wake/lock-screen behavior is unverified.
+[Windows system-control usages](https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input)
+
+The current candidate pairs fan **1.0.0.7**, power button **1.0.0.3**, RTC
 **1.0.0.3**, Bluetooth **1.0.0.18**, and the DDR200 **0.5.0.1** candidate. The fan's display
 power callback no longer writes registry hives while holding its backlight
 lock. The power button drains its timer before I2C power-down and optionally

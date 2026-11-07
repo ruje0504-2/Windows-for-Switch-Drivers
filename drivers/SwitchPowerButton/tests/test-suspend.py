@@ -4,8 +4,8 @@ from pathlib import Path
 import os,re,subprocess,tempfile
 s=(Path(__file__).resolve().parents[1]/'src/switchpwrbtn.c').read_text()
 functions=[]
-for name in ['SwPwrEvtTimer','SwPwrEvtSuspend','SwPwrEvtRestart']:
- m=re.search(r'^(?:VOID|NTSTATUS) '+name+r'\(',s,re.M);assert m
+for name in ['SwPwrPressReport','SwPwrEvtTimer','SwPwrEvtSuspend','SwPwrEvtRestart']:
+ m=re.search(r'^(?:static )?(?:VOID|NTSTATUS|UCHAR) '+name+r'\(',s,re.M);assert m
  b=s.index('{',m.start());n=1;e=b+1
  while n:n+=(s[e]=='{')-(s[e]=='}');e+=1
  functions.append(s[m.start():e])
@@ -26,19 +26,22 @@ typedef uint32_t ULONG;typedef int32_t LONG,NTSTATUS;typedef int KIRQL;
 #define MAX77620_ONOFFSTAT 0x15
 #define ONOFFSTAT_EN0 4
 #define ONOFFIRQ_EN0_R 8
+#define REPORT_POWER 1
+#define REPORT_WAKE 2
 #define POLL_MS 50
 #define WDF_REL_TIMEOUT_IN_MS(x) (x)
 typedef struct Device *WDFDEVICE,*PSWPWR_DEVICE;
 typedef struct Timer {WDFDEVICE Device;bool armed;} *WDFTIMER;
 struct Device {bool Stopping,Pressed,SuppressHeld;int TimerLock;WDFTIMER Timer;void *I2c,*Vhf,*Interrupt;
- ULONG Failures;LONG Polls,Presses,Reports;};
+ ULONG Failures;LONG Polls,Presses,Reports,DisplayOff;};
 static bool locked,fail;static UCHAR irq,stat;
-static unsigned reads,count;static bool reports[64];
+static unsigned reads,count;static UCHAR reports[64];
 static PSWPWR_DEVICE SwPwrGetDevice(WDFDEVICE d){return d;}
 static WDFTIMER SwPwrGetTimer(WDFTIMER t){return t;}
 static void SwPwrTrace(const wchar_t *n,ULONG v){(void)n;(void)v;}
-static void SwPwrReport(PSWPWR_DEVICE d,bool p){(void)d;assert(!locked&&count<64);reports[count++]=p;}
+static void SwPwrReport(PSWPWR_DEVICE d,UCHAR p){(void)d;assert(!locked&&count<64);reports[count++]=p;}
 static LONG InterlockedIncrement(LONG *p){return ++*p;}
+static LONG InterlockedCompareExchange(volatile LONG *p,LONG v,LONG c){LONG old=*p;if(old==c)*p=v;return old;}
 static void KeAcquireSpinLock(int *l,KIRQL *i){(void)l;*i=0;assert(!locked);locked=true;}
 static void KeReleaseSpinLock(int *l,KIRQL i){(void)l;(void)i;assert(locked);locked=false;}
 static void WdfTimerStart(WDFTIMER t,int ms){assert(locked&&ms==50&&!t->Device->Stopping);t->armed=true;}
@@ -65,6 +68,9 @@ int main(void){
  SwPwrEvtSuspend(&d);fail=true;assert(SwPwrEvtRestart(&d)<0&&!t.armed&&d.Stopping);fail=false;
  for(int n=0;n<20;n++){assert(SwPwrEvtRestart(&d)==0);SwPwrEvtTimer(&t);SwPwrEvtSuspend(&d);}
  assert(count==6&&!t.armed&&d.Stopping&&!locked);
+ /* Legacy polling also reports display-off input as a wake pulse. */
+ d.DisplayOff=1;assert(SwPwrEvtRestart(&d)==0);irq=8;SwPwrEvtTimer(&t);
+ assert(count==8&&reports[6]==REPORT_WAKE&&reports[7]==0);
  puts("PASS: timer drain, stopped I2C, wake-press consumption, short presses and repeated suspend/resume");
 }
 '''
