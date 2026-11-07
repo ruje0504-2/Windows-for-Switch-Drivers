@@ -136,6 +136,12 @@ and the miniport for comparison. The visible profile remains in source; its
 performance issue is unresolved. Both builds retain SDR104/ADMA2 and the same
 runtime transfer limit.
 
+The owner reported no recurring stalls in the 0.4.2.0 hidden-FAT trial and
+requested a visible-FAT comparison. Package 0.4.2.1 provides a distinct INF
+version for that signed visible-profile package, with the same transfer code.
+The paired BL33 must expose the same partition view. This observation does
+not establish the cause of the earlier visible-FAT stalls.
+
 Candidate 0.4.2.0 removes the cancelled S4 experiment. The Lite profile does
 not advertise dump/hibernate support, allocate a dump DMA buffer or bypass the
 I2C gate in a dump path. Normal SDR104, card identity/write bounds and the
