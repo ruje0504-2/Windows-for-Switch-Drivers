@@ -198,6 +198,9 @@ int main(void){
  good_first=40;good_last=46;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&!s.T214DdrFatal&&power_cycles==1);
  assert(s.T214DdrWindow==7&&s.T214DdrFallbacks==1&&card_mode==3&&s.TargetFacts==expected_facts);
+ /* Reset-all loses the SDPORT-owned event masks. Recovery must restore both
+  * masks before the next interrupt-driven disk request can complete. */
+ assert(raw32(regs,0x34)==0x12345678&&raw32(regs,0x38)==0x87654321);
  unsigned before=command_count;assert(T214DdrTry(&s)==0&&command_count==before);
  init(&s);good_last=38;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&s.T214DdrWindow==7&&power_cycles==1);
@@ -209,6 +212,7 @@ int main(void){
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&clock_us<2000000);
  init(&s);good_last=38;changed_rca=true;
  assert(T214DdrTry(&s)==STATUS_DEVICE_PROTOCOL_ERROR&&s.T214DdrFatal&&s.TargetFacts==0);
+ assert(raw32(regs,0x34)==0x12345678&&raw32(regs,0x38)==0x87654321);
  /* Only a new native SDPORT enumeration may repair a changed RCA. */
  assert(!s.T214DdrRecoverNeeded);
  card_mode=3;s.T214CardInfoValid=4;s.T214Rca=0x43210000;
@@ -217,8 +221,15 @@ int main(void){
  assert(T214DdrTry(&s)==STATUS_WRONG_VOLUME&&s.T214DdrFatal&&s.TargetFacts==0);
  init(&s);good_last=38;power_fails=true;
  assert(T214DdrTry(&s)==STATUS_IO_DEVICE_ERROR&&s.T214DdrFatal);
+ assert(raw32(regs,0x34)==0x12345678&&raw32(regs,0x38)==0x87654321);
  init(&s);clock_fails=true;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&power_cycles==1);
+ /* Restoring zero masks matters too: a polling/crash-free caller must not
+  * acquire interrupts it never requested. Successful recovery clears private
+  * completion flags before any original signal mask is restored. */
+ init(&s);good_last=38;put32(regs,0x34,0);put32(regs,0x38,0);
+ assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&!s.T214DdrFatal);
+ assert(raw32(regs,0x34)==0&&raw32(regs,0x38)==0&&raw32(regs,0x30)==0);
  init(&s);s.OutstandingRequests[0]=&s;
  assert(T214DdrTry(&s)==STATUS_DEVICE_BUSY&&command_count==0);
  init(&s);
@@ -228,7 +239,7 @@ int main(void){
  cmd_timeout=true;
  assert(T214DdrCommand(&s,13,card_rca,0x1a,NULL,0,NULL)==STATUS_IO_TIMEOUT&&clock_us==50000);
  assert(raw32(regs,0x34)==0x12345678&&raw32(regs,0x38)==0x87654321);
- puts("PASS: actual DDR transaction/tuning, readback mismatch, narrow-window/timeout recovery, RCA/CID fail-closed, no private data writes");
+ puts("PASS: actual DDR transaction/tuning, readback mismatch, narrow-window/timeout recovery, RCA/CID fail-closed, SDPORT event-mask restoration, no private data writes");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='lite-ddr200-transport-') as temp:
