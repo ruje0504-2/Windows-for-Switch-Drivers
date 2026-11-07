@@ -22,6 +22,8 @@ has not passed. The SD/Bluetooth installation below is independent of SC7.
 | `switchfan` 1.0.0.6 | The owner confirmed that the fan stops with the screen off and resumes after wake. The driver releases CPU overclock while the screen is off and retains thermal protection. Brightness and 1996.8 MHz CPU / 1866 MHz RAM were observed with 1.0.0.5. Full SoC sleep remains unverified. [Cooling policy](docs/hdh001/README.md#shared-fan-and-t214-clock-control) |
 | `switchbattery` 1.0.0.8 / shutdown | Normal Windows shutdown powered off the tested Lite with Wi-Fi, Bluetooth, audio and gamepad enabled. The battery driver now hands IRPs to battc before KMDF owns them. Native restart subsequently passed on the normal R6 firmware without fan pulses. [Power status](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/power-performance.md) |
 
+**Known sleep/wake issue:** after several short power-button presses or repeated use of Windows sleep controls, the display may freeze, turn black, or the system may hang. A movable pointer does not necessarily mean the lock screen can be unlocked.
+
 Windows uses CPU software rendering only. The Tegra GPU driver for Windows has not been implemented.
 
 The USB-C host package is on the Windows 23H2 card and awaits hardware testing. [USB-C host](drivers/TegraXusb/README.md)

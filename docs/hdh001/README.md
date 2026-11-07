@@ -17,6 +17,8 @@ The build script also produces the existing SwitchPowerButton driver for the opt
 
 The companion Windows firmware provides the GPIO interrupt resources, I²C3, touch power initialization and NTFS boot path. Its Hekate entry is **Windows 11 Lite**. [Firmware source](https://github.com/ruje0504-2/winx/tree/hdh001-hekate-sd)
 
+**Known sleep/wake issue:** after several short power-button presses or repeated use of Windows sleep controls, the display may freeze, turn black, or the system may hang. A movable pointer does not necessarily mean the lock screen can be unlocked. See the [Stage 6 installation guide](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/README.md#repeated-sleep-and-wake) for the current installation and power behavior.
+
 ## Compile the Lite driver set
 
 Set WDK_INCLUDE to the WDK Include/version directory, WDK_LIB to Lib/version/km/ARM64, WDF_INCLUDE to Include/wdf/kmdf/1.15, and WDF_LIB to Lib/wdf/kmdf/ARM64/1.15. CLANG_CL and LLD_LINK select the tools. WDK_EXTRA_LIB can select the matching SPB, GPIO, VHF, and battery-class (`battc.lib`) libraries. The script builds GPIO, I²C, Lite touch, power button, fan, battery, RTC, and Bluetooth.
@@ -30,7 +32,7 @@ The existing `tools/Build-Driver.ps1` also accepts the Lite source via its Sourc
 
 ## SD system partition
 
-The bounded-write profile is in `drivers/Tegra210Sdhc/winarm`. Use the existing target generator with a saved image to produce the private header, and build the optional WINARM profile as described in the SD README. The matching INF is version 0.3.2.5.
+The bounded-write profile is in `drivers/Tegra210Sdhc/winarm`. Use the existing target generator with a saved image to produce the private header, and build the optional WINARM profile as described in the SD README. The current INF is version 0.5.0.3. The owner confirmed desktop boot with FAT32 visible and Bluetooth 1.0.0.19; actual DDR200 mode and throughput still need runtime evidence.
 
 The returned in-memory MBR places the configured WINARM partition in slot 1 and sets its active flag. This lets the system-partition check used by Windows Setup accept the already-booted MBR volume. The physical card's identifiers and full write bounds remain part of the selected profile's checks.
 
