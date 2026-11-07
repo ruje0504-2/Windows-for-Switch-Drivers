@@ -148,7 +148,7 @@ private card header in BL33 and the miniport. Direct retained-memory sleep/wake
 is still under development. DDR200 is a separate extension; see the
 [long-term goal](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/PORTING.md#windows-ddr200-goal).
 
-### T214 DDR200 candidate (0.5.0.0)
+### T214 DDR200 candidate (0.5.0.1)
 
 Build with `NV_T210_LITE_WINARM_WRITE=1`, `NV_T214_SDR104=1` and
 `NV_T214_DDR200=1`. The normal build keeps the extension disabled. Use the

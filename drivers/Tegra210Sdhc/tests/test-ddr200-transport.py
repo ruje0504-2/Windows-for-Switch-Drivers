@@ -192,6 +192,7 @@ int main(void){
  assert((raw16(regs,0x3e)&7)==4&&s.T214Tuned);
  assert(T214DdrClock(&s,0)==0&&NvDiag.ClockKhzActual==0&&!(raw16(regs,0x2c)&5));
  assert(T214DdrClock(&s,200000)==0&&NvDiag.ClockKhzActual==199680);
+ assert(T214DdrClock(&s,208000)==0&&NvDiag.ClockKhzRequested==200000&&NvDiag.ClockKhzActual==199680);
  /* Re-tuning stays in DDR, with no extra vendor switch or power cycle. */
  assert(T214DdrTry(&s)==0&&s.T214DdrActive&&power_cycles==0);
  good_first=40;good_last=46;

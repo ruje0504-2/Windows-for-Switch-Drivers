@@ -98,6 +98,10 @@ static NTSTATUS T214DdrClock(PSDHC_EXTENSION s, ULONG Frequency)
         NvDiag.RegClockControl = clock & ~5u;
         return STATUS_SUCCESS;
     }
+    /* SDPORT may request SDR104's nominal 208 MHz. The B01 board limit is
+     * 200 MHz, just as in the base SDR104 clock setter and Switchroot DT.
+     */
+    if (Frequency > 200000) Frequency = 200000;
     ULONG divider = T214Ddr200CarDivider(Frequency);
     if (divider == MAXULONG) return STATUS_NOT_SUPPORTED;
     ULONG pll = T214Read(s->T214Car, 0x5a4);
