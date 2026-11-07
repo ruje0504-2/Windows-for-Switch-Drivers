@@ -139,8 +139,10 @@ runtime transfer limit.
 The owner reported no recurring stalls in the 0.4.2.0 hidden-FAT trial and
 requested a visible-FAT comparison. Package 0.4.2.1 provides a distinct INF
 version for that signed visible-profile package, with the same transfer code.
-The paired BL33 must expose the same partition view. This observation does
-not establish the cause of the earlier visible-FAT stalls.
+The paired BL33 must expose the same partition view. The owner reproduced
+a roughly one-minute stall with 0.4.2.1, then requested the visible profile
+again together with the previously accepted Bluetooth package. The cause is
+still unproven; further performance investigation was deferred on request.
 
 Candidate 0.4.2.0 removes the cancelled S4 experiment. The Lite profile does
 not advertise dump/hibernate support, allocate a dump DMA buffer or bypass the
@@ -150,9 +152,17 @@ whole-system sleep or re-identification after card power loss.
 
 Build with `NV_T210_LITE_WINARM_WRITE=1` and `NV_T214_SDR104=1`, using the same
 private card header in BL33 and the miniport. Direct retained-memory sleep/wake
-is still under development. DDR200 automatic detection, manual tuning and
-SDR104 fallback are a separate planned extension; see the
+is still under development. DDR200 is a separate extension; see the
 [long-term goal](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/PORTING.md#windows-ddr200-goal).
+
+The opt-in `NV_T214_DDR200=1` development build currently observes completed
+SCR/CMD6 reads and records `Ddr200CardInfo` / `Ddr200Capable`. Its capability
+gate, nonwrapping sampling-window selector (minimum eight taps), and CAR
+divider calculation pass `python3 drivers/Tegra210Sdhc/tests/test-ddr200.py`
+with address/undefined-behavior sanitizers. Hidden/visible ARM64 builds pass.
+**This is capability groundwork, not working DDR200:** vendor-mode switching,
+physical manual tuning and verified SDR104 recovery are not connected yet.
+The installed 0.4.2.1 package still uses SDR104 and does not enable this option.
 
 References: [Microsoft SD miniport](https://github.com/microsoft/Windows-driver-samples/tree/main/sd/miniport/sdhc)
 and [Switchroot SDHCI transfer limits](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/linux-5.1.2/drivers/mmc/host/sdhci.c).

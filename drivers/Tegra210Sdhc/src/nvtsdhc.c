@@ -65,6 +65,10 @@ static VOID LiteForgetCard(PSDHC_EXTENSION slot)
     slot->NextReadLba = MAXULONG;
     slot->AppPrefixAccepted = FALSE;
     slot->IssuedWriteCount = 0;
+#if NV_T214_DDR200
+    slot->T214CardInfoValid = 0;
+    slot->T214Rca = 0;
+#endif
 }
 
 static VOID LiteObserveRead(PSDHC_EXTENSION slot, PSDPORT_COMMAND cmd)
@@ -330,6 +334,31 @@ static NV_DIAG NvDiag = { .LastErrorCommand = 0xFF };
 #if NV_T214_SDR104
 #include "t214_sdmmc.h"
 #endif
+#if NV_T214_DDR200
+#include "t214_ddr200_policy.h"
+
+/* Observe only completed single-block metadata reads already issued by
+ * SDPORT. Do not infer capability from a card name or send private commands
+ * inside the request-completion path.
+ */
+static VOID T214ObserveCardInfo(PSDHC_EXTENSION s, PSDPORT_REQUEST request)
+{
+    PSDPORT_COMMAND c = &request->Command;
+    if (request->Type != SdRequestTypeStartTransfer ||
+        c->TransferDirection != SdTransferDirectionRead ||
+        c->TransferType != SdTransferTypeSingleBlock || c->BlockCount != 0 ||
+        c->DataBuffer == NULL) return;
+    if (c->Index == 51 && c->Class == SdCommandClassApp &&
+        c->BlockSize == 8 && c->Length == 8) {
+        RtlCopyMemory(s->T214Scr, c->DataBuffer, 8);
+        s->T214CardInfoValid |= 1;
+    } else if (c->Index == 6 && c->Class == SdCommandClassStandard &&
+               c->BlockSize == 64 && c->Length == 64) {
+        RtlCopyMemory(s->T214SwitchStatus, c->DataBuffer, 64);
+        s->T214CardInfoValid |= 2;
+    }
+}
+#endif
 
 static UCHAR
 NvDiagErrorKind(
@@ -493,6 +522,12 @@ NvDiagSaveClock(
     NvDiagCapture( L"ContextSaves", SdhcExtension->T214Saves);
     NvDiagCapture( L"ContextRestores", SdhcExtension->T214Restores);
     NvDiagCapture( L"ResumeStatus", SdhcExtension->T214ResumeStatus);
+#if NV_T214_DDR200
+    NvDiagCapture( L"Ddr200CardInfo", SdhcExtension->T214CardInfoValid);
+    NvDiagCapture( L"Ddr200Capable", (SdhcExtension->T214CardInfoValid & 3) == 3 &&
+                   T214Ddr200Supported(SdhcExtension->T214Scr,
+                                       SdhcExtension->T214SwitchStatus));
+#endif
 #endif
 #if NV_T210_LITE_WINARM_WRITE
     NvDiagCapture( L"App42Done", NvDiag.App42Done);
@@ -1654,6 +1689,16 @@ Return value:
 
     SdhcExtension = (PSDHC_EXTENSION) PrivateExtension;
     Status = SdhcGetResponse(SdhcExtension, Command, ResponseBuffer);
+#if NV_T214_DDR200
+    if (NT_SUCCESS(Status) && Command->Index == 3 && Command->ResponseType == SdResponseTypeR6) {
+        ULONG r6;
+        RtlCopyMemory(&r6, ResponseBuffer, sizeof(r6));
+        if (!(r6 & 0xe000u)) SdhcExtension->T214Rca = r6 & 0xffff0000u;
+    } else if (NT_SUCCESS(Status) && Command->Index == 2 && Command->ResponseType == SdResponseTypeR2) {
+        RtlCopyMemory(SdhcExtension->T214Cid, ResponseBuffer, 16);
+        SdhcExtension->T214CardInfoValid |= 4;
+    }
+#endif
 #if NV_T210_LITE_WINARM_WRITE
     if (NT_SUCCESS(Status) && Command->Index == 41 && Command->ResponseType == SdResponseTypeR3) {
         if ((LiteU32((const unsigned char *)ResponseBuffer) & 0xc0000000u) == 0xc0000000u)
@@ -1786,6 +1831,10 @@ Return value:
         SdPortCompleteRequest(Request, Status);
 
     } else if (Request->RequiredEvents == 0) {
+#if NV_T214_DDR200
+        if (Request->Status != STATUS_MORE_PROCESSING_REQUIRED)
+            T214ObserveCardInfo(SdhcExtension, Request);
+#endif
         if (Request->Status != STATUS_MORE_PROCESSING_REQUIRED) {
             Request->Status = STATUS_SUCCESS;
         }

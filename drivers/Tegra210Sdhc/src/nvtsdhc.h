@@ -1,6 +1,12 @@
 #ifndef NV_T214_SDR104
 #define NV_T214_SDR104 0
 #endif
+#ifndef NV_T214_DDR200
+#define NV_T214_DDR200 0
+#endif
+#if NV_T214_DDR200 && !NV_T214_SDR104
+#error "DDR200 requires the T214 SDR104 recovery path."
+#endif
 /*++
 
 Copyright (c) 2014 Microsoft Corporation
@@ -1401,6 +1407,10 @@ typedef struct _SDHC_EXTENSION {
     BOOLEAN T214ContextValid;
     ULONG T214Saves, T214Restores, T214ResumeStatus;
     BOOLEAN T214CardOn, T214Voltage18, T214Tuned, T214DmaActive, T214DmaComplete, T214DmaFault;
+#if NV_T214_DDR200
+    UCHAR T214Scr[8], T214SwitchStatus[64], T214Cid[16];
+    ULONG T214CardInfoValid, T214Rca;
+#endif
 #endif
 #if NV_T210_LITE_WINARM_WRITE
     volatile LONG TargetFacts;
