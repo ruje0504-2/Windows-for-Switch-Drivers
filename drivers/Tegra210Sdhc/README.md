@@ -219,8 +219,11 @@ SDR104 fallback; it does not enable SC7.
 The signed FAT32-visible 0.5.0.3 package was installed with Bluetooth 1.0.0.19
 on 2026-11-07. SYS/INF/CAT readbacks matched. The original boot/firmware files,
 other drivers, service start settings and Bluetooth pairing state were retained.
-The card was safely ejected. Physical desktop boot, DDR200 selection/fallback
-and Bluetooth discovery still require testing.
+After this update, the owner confirmed **successful desktop boot and working
+Bluetooth**. This accepts the observed boot and Bluetooth recovery on the
+tested Lite. Actual DDR200 selection, electrical tuning/fallback and throughput
+remain unverified until the runtime parameters are read; a successful boot
+alone does not distinguish DDR200 from SDR104.
 
 ```sh
 python3 drivers/Tegra210Sdhc/tests/test-ddr200.py

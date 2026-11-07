@@ -186,8 +186,9 @@ host is left enabled; shared PLLP, Wi-Fi power and paired-device state are not
 modified. Actual-callback tests cover repeated host context loss, inaccessible
 clocks, stuck reset/enable bits and orderly D0 cleanup. ARM64 compilation and
 SYS/catalog verification pass. It is now installed with DDR200 0.5.0.3;
-package readback, radio identity and paired-device checks passed. Physical
-discovery and a successful boot on this combination are still unverified.
+package readback, radio identity and paired-device checks passed. The owner
+confirmed successful desktop boot and working Bluetooth on this combination;
+repeated startup and sleep/wake remain separate tests.
 [Switchroot UART initialization](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/tty/serial/serial-tegra.c#L1108)
 
 The installer includes Bluetooth when a signed `switchbt/switchbt.inf` is
