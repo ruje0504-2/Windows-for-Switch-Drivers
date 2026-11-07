@@ -42,13 +42,19 @@ For the interrupted Home installation tested here, Windows subsequently required
 
 On Lite, TMP451 uses the Mariko -12.5 C remote offset. The optional firmware handoff requests CPU 1996.8 MHz with MAX77812 M4 at 1120 mV, independently of whether the firmware completed the requested EMC change. The fan timer owns both cooling and CPU transitions. At 80 C or after repeated sensor-read failures it restores the saved boot CPU frequency; at 70 C it can resume the request. It does not touch MAX77812 M1/GPU registers.
 
-Use the matching firmware's `cpu_oc`/`ram_oc` INI options and its LitePerformanceCheck application. Parameters records include CpuActualKhz, RamActualKhz, TempSoC, TempBoard, Duty, SensorFailures and status. Build with `docs/hdh001/build-drivers.sh`; the shared INF is version 1.0.0.6. The existing Erista CPU-clock driver is not loaded for the Lite profile.
+Use the matching firmware's `cpu_oc`/`ram_oc` INI options and its LitePerformanceCheck application. Parameters records include CpuActualKhz, RamActualKhz, TempSoC, TempBoard, Duty, SensorFailures and status. Build with `docs/hdh001/build-drivers.sh`; the shared INF is version 1.0.0.7. The existing Erista CPU-clock driver is not loaded for the Lite profile.
 
 Version 1.0.0.6 handles Lite screen-off cooling using the existing display-power notification. It restores the saved boot CPU clock before removing the overclock fan floor. The normal temperature curve stops the fan at 39 C or below and restarts it at 42 C; hot screen-off workloads still get cooling. Failed clock restoration retains the fan floor, and a failed temperature read restarts an already stopped fan immediately. On display wake the fan is set before CPU overclock can resume. A cool system sleep/hibernate D0 exit can also stop the fan; final removal, shutdown and device-only idle retain their existing cooling behavior.
 
 The ARM64 build, CPU/backlight checks, and `python3 drivers/SwitchFan/tests/test-screenoff.py` pass. The latter exercises the actual timer and D0 callbacks, including clock/fan ordering, invalid temperatures, wake and shutdown isolation. Native catalog generation, signing and offline installation readback passed. On 2026-11-07, the owner confirmed one successful screen-off fan stop and wake recovery with 1.0.0.6, then reported lock-screen/black-screen stalls after repeated cycles. Repeated wake is not accepted. `ScreenOffCooling`, `SleepFanOff`, `CpuOverclockActive`, `Duty` and `DriverVersion` update fixed values under the driver's existing Parameters key; no periodic log files are created.
 
 Screen-off cooling does not establish SoC low-power sleep. The observed Modern Standby records had no DRIPS residency, and S4 hibernation is disabled in the tested installation. Physical CPU readback on 1.0.0.5 is 1996.8 MHz and RAM is 1866 MHz, below the requested 2100 MHz. Normal shutdown and native restart have separate owner-confirmed results in the [power status](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/power-performance.md).
+
+The latest default-branch baseline is merged here, including SD 0.5.0.3,
+Bluetooth 1.0.0.19 and the owner-confirmed desktop/Bluetooth results. The SD
+update fixes the reproduced loss of SDPORT interrupt masks during private
+recovery; active DDR200 mode and physical fallback still need runtime evidence.
+The experimental sleep modules below remain confined to this paused branch.
 
 ## Sleep/wake repair in progress
 
