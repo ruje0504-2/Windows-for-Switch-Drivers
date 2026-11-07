@@ -133,7 +133,7 @@ segments and checked write bounds. Bounded diagnostics include `AdmaBufferBytes`
 Both hidden and visible builds retain SDR104/ADMA2 and the same runtime
 transfer limit. Earlier comparisons reported roughly one-minute stalls, but
 on the latest trial the owner found no clear responsiveness difference.
-The current card keeps FAT32 visible with package 0.5.0.1 and a matching
+The current card keeps FAT32 visible with package 0.5.0.3 and a matching
 BL33. Further performance investigation is deferred; this is not evidence of
 a completed performance fix. Keep both source profiles available.
 
@@ -199,8 +199,8 @@ the SDR104 source before switching back. Only SDMMC1's set/clear clock bits
 are changed; old commands, DMA pointers and interrupt status are not replayed.
 PLL, clock-enable, reset, source-readback or internal-clock failure blocks
 data I/O. ARM64 builds for both partition views, actual-callback fault tests
-and signed visible-package checks pass. This candidate is not installed or physically accepted; the card
-still has the failing 0.5.0.1 combination. It covers retained card power,
+and signed visible-package checks pass. These changes are included in the installed 0.5.0.3 candidate below;
+physical acceptance remains pending. It covers retained card power,
 not platform-wide power loss or a card power-cycle/re-identification. It does
 not depend on the experimental PEP and does not establish a cold-boot fix.
 
@@ -215,6 +215,12 @@ zero masks and failed card recovery. Both ARM64 builds pass. This is a
 code-level defect and a candidate fix, not proof of the photographed blue
 screen's root cause or a successful hardware boot. It retains DDR200 and the
 SDR104 fallback; it does not enable SC7.
+
+The signed FAT32-visible 0.5.0.3 package was installed with Bluetooth 1.0.0.19
+on 2026-11-07. SYS/INF/CAT readbacks matched. The original boot/firmware files,
+other drivers, service start settings and Bluetooth pairing state were retained.
+The card was safely ejected. Physical desktop boot, DDR200 selection/fallback
+and Bluetooth discovery still require testing.
 
 ```sh
 python3 drivers/Tegra210Sdhc/tests/test-ddr200.py

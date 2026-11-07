@@ -41,7 +41,8 @@ Screen-off cooling does not establish SoC low-power sleep. The observed Modern S
 
 ## Experimental sleep branch
 
-Retained-memory sleep and direct power-button wake are developed only in
+Retained-memory sleep and direct power-button wake development is paused;
+its experimental code is preserved only in
 [`sc7-test`](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/sc7-test),
 paired with [WinX `sc7-test`](https://github.com/ruje0504-2/winx/tree/sc7-test).
 The default branch excludes the processor PEP, PMIC wake-interrupt path,
@@ -52,7 +53,7 @@ S4 hibernation remains removed; SC7 has not passed hardware acceptance.
 
 Independent fixes remain here: fan 1.0.0.7 keeps registry I/O outside the
 backlight notification lock; Bluetooth 1.0.0.19 retains bounded chip recovery
-and UART host preparation; SD 0.5.0.2 retains DDR200 development and its
+and UART host preparation; SD 0.5.0.3 retains DDR200 development and its
 retained-card-power host recovery. None enables platform sleep or depends on
 the experimental PEP. Working battery/shutdown fixes are retained.
 
@@ -60,7 +61,10 @@ On 2026-11-07 the installed Bluetooth 1.0.0.18 + DDR200 0.5.0.1 combination
 failed to reach the desktop with **INACCESSIBLE_BOOT_DEVICE**, confirmed in
 the owner's photograph. The returned card had crash dumps/error logging
 disabled and no new driver diagnostics; the failing operation remains unknown. No replacement was
-written during the branch split. See the [SD candidate status](../../drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501).
+written during the branch split. Afterwards, SD 0.5.0.3 and Bluetooth 1.0.0.19
+were installed and their signed package/SYS readbacks matched. The SD update
+fixes event-mask loss reproduced in the recovery callback; a successful
+physical boot and Bluetooth discovery remain unverified. See the [SD candidate status](../../drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501).
 
 ## Shared battery, RTC, and volume-button support
 
@@ -89,7 +93,7 @@ inbox BthMini child, patchram and 3 Mbaud flow control. The companion firmware's
 `SWITCH_LITE_BLUETOOTH=1` option supplies UART-D/PH3/PH4/PH5, the PMIC 32 kHz
 output and BTH0 resources. Do not add a separate Lite Bluetooth source copy.
 
-The installed **1.0.0.18** retains strict patch/status/baud verification
+The previous **1.0.0.18** trial retains strict patch/status/baud verification
 and HCI cancellation/drain. A stale `BootPending` value is diagnostic only;
 it no longer disables all later boots, and orderly D0 exit clears it. On a
 failed T214 probe, one PH4 reset and full retry are permitted before UART/HCI
@@ -108,8 +112,9 @@ unavailable PLLP parent without touching UART registers. A healthy cold-start
 host is left enabled; shared PLLP, Wi-Fi power and paired-device state are not
 modified. Actual-callback tests cover repeated host context loss, inaccessible
 clocks, stuck reset/enable bits and orderly D0 cleanup. ARM64 compilation and
-SYS/catalog verification pass. This candidate is not installed or hardware
-accepted; 1.0.0.18 remains on the card with DDR200 0.5.0.1.
+SYS/catalog verification pass. It is now installed with DDR200 0.5.0.3;
+package readback, radio identity and paired-device checks passed. Physical
+discovery and a successful boot on this combination are still unverified.
 [Switchroot UART initialization](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/tty/serial/serial-tegra.c#L1108)
 
 The installer includes Bluetooth when a signed `switchbt/switchbt.inf` is
