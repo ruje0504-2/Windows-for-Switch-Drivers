@@ -180,7 +180,10 @@ reads them again. SDPORT's logical `BusSpeed=7` remains SDR104; use
 
 Host sanitizer tests cover capability parsing, seven/eight-tap boundaries,
 clock limits, actual mode-transition code, timeouts, corrupted readbacks,
-CID/RCA mismatch and both partition views. ARM64 builds pass. These are
+CID/RCA mismatch and both partition views. ARM64 builds pass. The signed
+FAT32-visible 0.5.0.1 package was installed with Bluetooth 1.0.0.18 on
+2026-11-07; its SYS/INF/CAT matched on readback. The existing visible-profile
+BL33 and all physical partition boundaries were retained. These are
 **code/build results, not physical DDR200 acceptance or a throughput claim**.
 SC7 and repeated retained-memory wake remain separate unfinished work.
 

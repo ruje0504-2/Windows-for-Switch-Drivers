@@ -49,7 +49,7 @@ release input and reinitialize hardware. The power button remains the wake
 source. These changes are compiled and host-tested, not hardware accepted.
 
 The current candidate pairs fan **1.0.0.7**, power button **1.0.0.2**, RTC
-**1.0.0.3**, Bluetooth **1.0.0.17**, and SDR104 **0.4.2.0**. The fan's display
+**1.0.0.3**, Bluetooth **1.0.0.18**, and the DDR200 **0.5.0.1** candidate. The fan's display
 power callback no longer writes registry hives while holding its backlight
 lock. The power button drains its timer before I2C power-down and optionally
 uses a passive wake interrupt instead of polling. The RTC unregisters and
@@ -120,9 +120,12 @@ it no longer disables all later boots, and orderly D0 exit clears it. On a
 failed T214 probe, one PH4 reset and full retry are permitted before UART/HCI
 traffic starts. PH3 is held awake; Wi-Fi power and the shared 32 kHz clock are
 untouched. These follow the Switchroot B01 Bluetooth wiring and the existing
-Lite DXE power sequence. ARM64 compilation and host fault tests pass; repeat
-physical discovery and shutdown remain unverified. Install it with the DDR200
-update requested by the owner, not as another standalone rollback package.
+Lite DXE power sequence. ARM64 compilation, host fault tests and signed
+catalog checks pass. It was installed with DDR200 0.5.0.1 on 2026-11-07;
+SYS/INF/CAT readback matched. Older matching Bluetooth packages were removed
+to prevent reselection, while the existing radio identity and paired-device
+registry state were preserved. Repeat physical discovery and shutdown remain
+unverified for this replacement.
 
 The installer includes Bluetooth when a signed `switchbt/switchbt.inf` is
 present. Supply the private Switch-specific patch at `Firmware/BCM4356A3.hcd`;
