@@ -33,6 +33,8 @@
 #define REG_INT_LVL  0x60
 #define REG_INT_CLR  0x70
 #define REG_MASKED   0x80
+#define REG_DBC_EN   0xB0
+#define REG_DBC_CNT  0xF0
 
 #define LVL_LEVEL_LOW    0x000000
 #define LVL_LEVEL_HIGH   0x000001
@@ -41,9 +43,16 @@
 #define LVL_EDGE_BOTH    0x010100
 #define LVL_PIN_MASK     0x010101
 
+typedef struct _TEGRA_GPIO_PORT_STATE {
+    ULONG Cnf, Oe, Out, InterruptEnable, InterruptLevel;
+    ULONG DebounceEnable, DebounceCount;
+} TEGRA_GPIO_PORT_STATE;
+
 typedef struct _TEGRA_GPIO_CONTEXT {
     volatile UCHAR *Base;
     ULONG Length;
+    TEGRA_GPIO_PORT_STATE Saved[TEGRA_GPIO_BANKS][4];
+    BOOLEAN SavedValid;
 } TEGRA_GPIO_CONTEXT, *PTEGRA_GPIO_CONTEXT;
 
 DRIVER_INITIALIZE DriverEntry;
@@ -127,6 +136,7 @@ static NTSTATUS TegraGpioPrepareController(WDFDEVICE Device, PVOID Context, WDFC
     NTSTATUS Status = STATUS_SUCCESS;
     UNREFERENCED_PARAMETER(Device);
     UNREFERENCED_PARAMETER(ResourcesRaw);
+    Ctx->SavedValid = FALSE;
 
     TegraGpioTrace(L"PrepareResourceCount", Count);
     for (Index = 0; Index < Count; ++Index) {
@@ -157,6 +167,7 @@ static NTSTATUS TegraGpioReleaseController(WDFDEVICE Device, PVOID Context)
 {
     PTEGRA_GPIO_CONTEXT Ctx = (PTEGRA_GPIO_CONTEXT)Context;
     UNREFERENCED_PARAMETER(Device);
+    Ctx->SavedValid = FALSE;
     if (Ctx->Base != NULL) {
         MmUnmapIoSpace((PVOID)Ctx->Base, Ctx->Length);
         Ctx->Base = NULL;
@@ -166,18 +177,67 @@ static NTSTATUS TegraGpioReleaseController(WDFDEVICE Device, PVOID Context)
 
 static NTSTATUS TegraGpioStartController(PVOID Context, BOOLEAN RestoreContext, WDF_POWER_DEVICE_STATE PreviousPowerState)
 {
-    UNREFERENCED_PARAMETER(Context);
-    TegraGpioTrace(L"StartCalled", 1);
-    UNREFERENCED_PARAMETER(RestoreContext);
+    PTEGRA_GPIO_CONTEXT Ctx = Context;
+    ULONG Bank, Port;
     UNREFERENCED_PARAMETER(PreviousPowerState);
+    if (Ctx->Base == NULL) return STATUS_DEVICE_NOT_READY;
+    if (!RestoreContext) {
+        Ctx->SavedValid = FALSE;
+        return STATUS_SUCCESS;
+    }
+    if (!Ctx->SavedValid) return STATUS_INVALID_DEVICE_STATE;
+
+    /* No registry I/O here: storage can depend on GPIO during resume.
+     * GpioClx serializes the power callbacks with pin operations. Preserve
+     * pending wake status: do not acknowledge INT_STA/INT_CLR here. Switchroot
+     * saves the same CNF/OUT/OE/interrupt/debounce state across system sleep.
+     * Restore output latches before enabling drivers, and interrupts last. */
+    for (Bank = 0; Bank < TEGRA_GPIO_BANKS; ++Bank)
+        for (Port = 0; Port < 4; ++Port)
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_INT_ENB), 0);
+    for (Bank = 0; Bank < TEGRA_GPIO_BANKS; ++Bank) {
+        for (Port = 0; Port < 4; ++Port) {
+            const TEGRA_GPIO_PORT_STATE *Saved = &Ctx->Saved[Bank][Port];
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_OUT), Saved->Out);
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_CNF), Saved->Cnf);
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_OE), Saved->Oe);
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_DBC_CNT), Saved->DebounceCount);
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_DBC_EN),
+                                 0xFF00 | (Saved->DebounceEnable & 0xFF));
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_INT_LVL), Saved->InterruptLevel);
+        }
+    }
+    for (Bank = 0; Bank < TEGRA_GPIO_BANKS; ++Bank)
+        for (Port = 0; Port < 4; ++Port)
+            WRITE_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_INT_ENB),
+                                 Ctx->Saved[Bank][Port].InterruptEnable);
+    Ctx->SavedValid = FALSE;
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS TegraGpioStopController(PVOID Context, BOOLEAN SaveContext, WDF_POWER_DEVICE_STATE TargetState)
 {
-    UNREFERENCED_PARAMETER(Context);
-    UNREFERENCED_PARAMETER(SaveContext);
+    PTEGRA_GPIO_CONTEXT Ctx = Context;
+    ULONG Bank, Port;
     UNREFERENCED_PARAMETER(TargetState);
+    Ctx->SavedValid = FALSE;
+    if (!SaveContext) return STATUS_SUCCESS;
+    if (Ctx->Base == NULL) return STATUS_DEVICE_NOT_READY;
+    /* Keep the interrupt mask and board power pins as GpioClx/consumers left
+     * them. The class extension owns wake masking; saving must not disable it. */
+    for (Bank = 0; Bank < TEGRA_GPIO_BANKS; ++Bank) {
+        for (Port = 0; Port < 4; ++Port) {
+            TEGRA_GPIO_PORT_STATE *Saved = &Ctx->Saved[Bank][Port];
+            Saved->Cnf = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_CNF));
+            Saved->Out = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_OUT));
+            Saved->Oe = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_OE));
+            Saved->InterruptEnable = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_INT_ENB));
+            Saved->InterruptLevel = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_INT_LVL));
+            Saved->DebounceEnable = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_DBC_EN));
+            Saved->DebounceCount = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Bank, Port, REG_DBC_CNT));
+        }
+    }
+    Ctx->SavedValid = TRUE;
     return STATUS_SUCCESS;
 }
 
@@ -406,7 +466,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&TegraGpioParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, TegraGpioParamsPath);
     }
-    TegraGpioTrace(L"DriverVersion", 4);
+    TegraGpioTrace(L"DriverVersion", 5);
 
     WDF_DRIVER_CONFIG_INIT(&Config, TegraGpioEvtDeviceAdd);
     Config.EvtDriverUnload = TegraGpioEvtDriverUnload;

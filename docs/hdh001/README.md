@@ -48,6 +48,20 @@ power notification. Their existing suspend/resume callbacks stop polling,
 release input and reinitialize hardware. The power button remains the wake
 source. These changes are compiled and host-tested, not hardware accepted.
 
+GPIO **1.0.0.5** implements GpioClx's `SaveContext`/`RestoreContext` contract
+for all ports, following Switchroot's CNF, output/direction, debounce and
+interrupt register set. It restores output latches before enabling outputs,
+then enables interrupts after all configuration is restored. Pending wake
+events are preserved; power callbacks perform no registry I/O while storage
+may still be resuming. ARM64 build, signed catalog checks and actual-callback
+tests for repeated register loss and wake preservation pass. The candidate
+is not installed and does not by itself implement SC7.
+[Switchroot GPIO](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/gpio/gpio-tegra.c#L490)
+
+```sh
+python3 drivers/Tegra210Gpio/tests/test-context.py
+```
+
 The current candidate pairs fan **1.0.0.7**, power button **1.0.0.2**, RTC
 **1.0.0.3**, Bluetooth **1.0.0.18**, and the DDR200 **0.5.0.1** candidate. The fan's display
 power callback no longer writes registry hives while holding its backlight
