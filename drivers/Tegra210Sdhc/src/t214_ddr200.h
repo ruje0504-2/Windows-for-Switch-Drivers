@@ -262,8 +262,16 @@ static NTSTATUS T214DdrApp(PSDHC_EXTENSION s, ULONG Rca, ULONG Index,
 static NTSTATUS T214DdrRecover(PSDHC_EXTENSION s)
 {
     if (s->T214DmaActive || s->OutstandingRequests[0]) return STATUS_DEVICE_BUSY;
+    PUCHAR b = s->BaseAddress;
+    ULONG signals = T214Read(b, 0x38), enables = T214Read(b, 0x34);
     ULONG cid[4], expectedCid[4], rca = s->T214Rca, response;
     ULONG restoreSwitch = 0x80ff0003u | ((ULONG)s->T214SwitchStatus[15] << 8);
+    /* The private reset-all clears both SDHCI event masks. SDPORT is not
+     * performing this reset and will not necessarily re-arm them afterwards.
+     * Keep polling responses private, then return its exact masks on every
+     * exit so ordinary commands (or native recovery) can deliver interrupts.
+     */
+    T214Write(b, 0x38, 0);
     RtlCopyMemory(expectedCid, s->T214Cid, sizeof(expectedCid));
     s->T214DdrFallbacks++;
     s->T214DdrRecoverNeeded = FALSE; /* One recovery per failed transaction. */
@@ -345,6 +353,9 @@ static NTSTATUS T214DdrRecover(PSDHC_EXTENSION s)
     }
 done:
     s->T214DdrRecoveryStatus = st;
+    T214Write(b, 0x30, 0xffffffffu);
+    T214Write(b, 0x34, enables);
+    T214Write(b, 0x38, signals);
     return st;
 }
 

@@ -199,6 +199,18 @@ and signed visible-package checks pass. This candidate is not installed or physi
 still has 0.5.0.1. It covers retained card power, not a complete SC7 platform
 restore or a card power-cycle/re-identification.
 
+Recovery candidate **0.5.0.3** fixes a reproduced event-mask loss: the private
+DDR200 fallback performs a controller reset-all, which clears SDPORT's status
+and signal enables. Recovery previously returned without restoring those
+masks, so later interrupt-driven requests could stop completing. The callback
+now masks private polling traffic, clears its pending events and restores the
+caller's original masks on success and failure. The new regression failed
+before the fix and passes afterwards for both partition views, including
+zero masks and failed card recovery. Both ARM64 builds pass. This is a
+code-level defect and a candidate fix, not proof of the photographed blue
+screen's root cause or a successful hardware boot. It retains DDR200 and the
+SDR104 fallback; it does not enable SC7.
+
 ```sh
 python3 drivers/Tegra210Sdhc/tests/test-ddr200.py
 python3 drivers/Tegra210Sdhc/tests/test-ddr200-transport.py
