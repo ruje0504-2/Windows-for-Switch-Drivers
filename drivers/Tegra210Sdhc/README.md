@@ -133,7 +133,7 @@ segments and checked write bounds. Bounded diagnostics include `AdmaBufferBytes`
 Both hidden and visible builds retain SDR104/ADMA2 and the same runtime
 transfer limit. Earlier comparisons reported roughly one-minute stalls, but
 on the latest trial the owner found no clear responsiveness difference.
-The current request keeps FAT32 visible with package 0.4.2.1 and a matching
+The current card keeps FAT32 visible with package 0.5.0.1 and a matching
 BL33. Further performance investigation is deferred; this is not evidence of
 a completed performance fix. Keep both source profiles available.
 
@@ -187,9 +187,22 @@ BL33 and all physical partition boundaries were retained. These are
 **code/build results, not physical DDR200 acceptance or a throughput claim**.
 SC7 and repeated retained-memory wake remain separate unfinished work.
 
+Resume candidate **0.5.0.2** also saves the active CAR source and base clock.
+It restores SDMMC1's own enable/reset before accessing a lost controller,
+and restores the saved SDR104 or DDR200 source/divisor before the first card
+clock pulse. The previous sequence briefly enabled the saved DDR divisor on
+the SDR104 source before switching back. Only SDMMC1's set/clear clock bits
+are changed; old commands, DMA pointers and interrupt status are not replayed.
+PLL, clock-enable, reset, source-readback or internal-clock failure blocks
+data I/O. ARM64 builds for both partition views, actual-callback fault tests
+and signed visible-package checks pass. This candidate is not installed or physically accepted; the card
+still has 0.5.0.1. It covers retained card power, not a complete SC7 platform
+restore or a card power-cycle/re-identification.
+
 ```sh
 python3 drivers/Tegra210Sdhc/tests/test-ddr200.py
 python3 drivers/Tegra210Sdhc/tests/test-ddr200-transport.py
+python3 drivers/Tegra210Sdhc/tests/test-t214-context.py
 python3 drivers/Tegra210Sdhc/tests/test-diagnostics.py
 ```
 

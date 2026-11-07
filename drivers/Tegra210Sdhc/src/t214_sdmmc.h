@@ -363,7 +363,8 @@ static const ULONG T214ContextOffsets[] = {0x100, 0x1ac, 0x1c0, 0x1c4, 0x1f0};
 static VOID T214SaveContext(PSDHC_EXTENSION s)
 {
     s->T214ContextValid = FALSE;
-    if (s->T214DmaActive || (SdhcReadRegisterUlong(s, SDHC_PRESENT_STATE) & 3)) {
+    if (s->T214DmaActive || s->OutstandingRequests[0] ||
+        (SdhcReadRegisterUlong(s, SDHC_PRESENT_STATE) & 3)) {
         s->T214ResumeStatus = STATUS_DEVICE_BUSY;
         return;
     }
@@ -376,16 +377,52 @@ static VOID T214SaveContext(PSDHC_EXTENSION s)
     s->T214SavedHost = SdhcReadRegisterUchar(s, SDHC_HOST_CONTROL);
     s->T214SavedPower = SdhcReadRegisterUchar(s, SDHC_POWER_CONTROL);
     s->T214SavedTimeout = SdhcReadRegisterUchar(s, SDHC_TIMEOUT_CONTROL);
+    s->T214SavedSource = T214Read(s->T214Car, 0x150);
+    s->T214SavedBaseClock = s->Capabilities.BaseClockFrequencyKhz;
     s->T214ContextValid = TRUE;
     s->T214Saves++;
 }
+
+static NTSTATUS T214ResumeHostClock(PSDHC_EXTENSION s)
+{
+    const ULONG sdmmc1 = 1u << 14;
+    PUCHAR car = s->T214Car;
+    BOOLEAN ready = (T214Read(car, 0x10) & sdmmc1) &&
+                    !(T214Read(car, 0x04) & sdmmc1);
+    if (ready) {
+        /* A retained host may still clock the card. Gate it before changing
+         * the source. Do not access SDHCI at all while CAR holds it in reset. */
+        SdhcWriteRegisterUlong(s, 0x38, 0);
+        SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, 0);
+    } else {
+        T214Write(car, 0x300, sdmmc1); /* RST_DEV_L_SET */
+    }
+    NTSTATUS status = T214ParentClock(s);
+    if (!NT_SUCCESS(status)) return status;
+    /* DDR200 uses PLLC4 OUT0 and an SDHCI /2 divider. Restore that exact
+     * source before the first SDCLK pulse, not through an SDR104 interval. */
+    T214Write(car, 0x150, s->T214SavedSource);
+    if (T214Read(car, 0x150) != s->T214SavedSource)
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    if (!ready) {
+        T214Write(car, 0x320, sdmmc1); /* CLK_ENB_L_SET */
+        KeStallExecutionProcessor(2);
+        if (!(T214Read(car, 0x10) & sdmmc1)) return STATUS_DEVICE_POWER_FAILURE;
+        T214Write(car, 0x304, sdmmc1); /* RST_DEV_L_CLR */
+        KeStallExecutionProcessor(2);
+        if (T214Read(car, 0x04) & sdmmc1) return STATUS_DEVICE_POWER_FAILURE;
+    }
+    s->Capabilities.BaseClockFrequencyKhz = s->T214SavedBaseClock;
+    return STATUS_SUCCESS;
+}
+
 static VOID T214RestoreContext(PSDHC_EXTENSION s)
 {
     if (!s->T214ContextValid) return;
+    NTSTATUS status = T214ResumeHostClock(s);
+    if (!NT_SUCCESS(status)) goto failed;
     SdhcWriteRegisterUlong(s, 0x38, 0);
     SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, 0);
-    NTSTATUS status = T214ParentClock(s);
-    if (!NT_SUCCESS(status)) goto failed;
     for (ULONG i=0; i<RTL_NUMBER_OF(T214ContextOffsets); ++i)
         T214Write(s->BaseAddress, T214ContextOffsets[i], s->T214SavedVendor[i]);
     SdhcWriteRegisterUchar(s, SDHC_HOST_CONTROL, s->T214SavedHost);
@@ -402,12 +439,6 @@ static VOID T214RestoreContext(PSDHC_EXTENSION s)
         if (i==10000) {status=STATUS_IO_TIMEOUT;goto failed;}
     }
     SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, s->T214SavedClock);
-#if NV_T214_DDR200
-    if (s->T214DdrActive && (s->T214SavedClock & SDHC_CC_CLOCK_ENABLE)) {
-        status = T214DdrClock(s, s->T214DdrClockKhz);
-        if (!NT_SUCCESS(status)) goto failed;
-    }
-#endif
     SdhcWriteRegisterUlong(s, 0x34, s->T214SavedEnables);
     SdhcWriteRegisterUlong(s, 0x38, s->T214SavedSignals);
     s->T214Restores++;

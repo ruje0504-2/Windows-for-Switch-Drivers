@@ -90,7 +90,7 @@ is not installed; repeated physical wake/lock-screen behavior is unverified.
 [Windows system-control usages](https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input)
 
 The current candidate pairs fan **1.0.0.7**, power button **1.0.0.3**, RTC
-**1.0.0.3**, Bluetooth **1.0.0.19**, and the DDR200 **0.5.0.1** candidate. The fan's display
+**1.0.0.3**, Bluetooth **1.0.0.19**, and the DDR200 **0.5.0.2** candidate. The fan's display
 power callback no longer writes registry hives while holding its backlight
 lock. The power button drains its timer before I2C power-down and optionally
 uses a passive wake interrupt instead of polling. The RTC unregisters and

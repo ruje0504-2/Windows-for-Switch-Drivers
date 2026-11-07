@@ -92,10 +92,12 @@ typedef struct { LONG TargetFacts; ULONG NextReadLba,IssuedWriteLba; USHORT Issu
  PUCHAR T214Bounce,T214DmaBuffer; struct { ULONG LowPart; } T214BouncePa;
  ULONG T214DmaLength,T214DmaBlocks,T214DmaCapacity,T214DmaRequests,T214DmaMaxBlocks,T214PioFallbacks; struct { ULONG BaseClockFrequencyKhz; } Capabilities;
  ULONG T214SavedVendor[5],T214SavedEnables,T214SavedSignals;
+ ULONG T214SavedSource,T214SavedBaseClock;void *OutstandingRequests[1];
  USHORT T214SavedClock,T214SavedControl2;
  UCHAR T214SavedHost,T214SavedPower,T214SavedTimeout;
  BOOLEAN T214ContextValid;ULONG T214Saves,T214Restores,T214ResumeStatus;
- PUCHAR BaseAddress;UCHAR regs[512]; } SDHC_EXTENSION,*PSDHC_EXTENSION;
+ PUCHAR BaseAddress,T214Car;UCHAR regs[512]; } SDHC_EXTENSION,*PSDHC_EXTENSION;
+static UCHAR car_regs[4096];
 static struct { ULONG BlocksRead,BlocksWritten; } NvDiag;
 static LONG InterlockedExchange(LONG *p,LONG n){LONG o=*p;*p=n;return o;}
 static LONG InterlockedOr(LONG *p,LONG n){return *p|=n;}
@@ -105,6 +107,7 @@ static ULONG SdhcReadRegisterUlong(PSDHC_EXTENSION s,ULONG off){ULONG v;memcpy(&
 static ULONG T214Read(PUCHAR b,ULONG off){ULONG v;memcpy(&v,b+off,4);return v;}
 static void T214Write(PUCHAR b,ULONG off,ULONG v){memcpy(b+off,&v,4);}
 static NTSTATUS T214ParentClock(PSDHC_EXTENSION s){(void)s;return 0;}
+static NTSTATUS T214ResumeHostClock(PSDHC_EXTENSION s){(void)s;return 0;}
 static UCHAR SdhcReadRegisterUchar(PSDHC_EXTENSION s,ULONG off){return s->regs[off];}
 static USHORT SdhcReadRegisterUshort(PSDHC_EXTENSION s,ULONG off){USHORT v;memcpy(&v,s->regs+off,2);return v;}
 static void SdhcWriteRegisterUchar(PSDHC_EXTENSION s,ULONG off,UCHAR v){s->regs[off]=v;}
@@ -221,7 +224,7 @@ int main(void){
  assert(s.NextReadLba==2024&&s.T214DmaMaxBlocks==1024&&s.T214DmaRequests==1);
  r.Command.BlockCount=1025;assert(!T214BuildDma(&s,&r)&&s.T214PioFallbacks==1);
  /* Controller retention loss restores only configuration, never old I/O. */
- memset(&s,0,sizeof(s));s.BaseAddress=s.regs;
+ memset(&s,0,sizeof(s));s.BaseAddress=s.regs;s.T214Car=car_regs;
  s.regs[0x28]=0x12;s.regs[0x29]=0xb;s.regs[0x2e]=0xe;
  SdhcWriteRegisterUshort(&s,0x2c,7);SdhcWriteRegisterUshort(&s,0x3e,0x8b);
  SdhcWriteRegisterUlong(&s,0x34,0x12345678);SdhcWriteRegisterUlong(&s,0x38,0x87654321);

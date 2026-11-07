@@ -1402,6 +1402,7 @@ typedef struct _SDHC_EXTENSION {
     ULONG T214VoltageStatus, T214VoltageFailures, T214TuneStatus;
     ULONG T214TuningRuns, T214TuningIterations, T214Tap, T214CalFallbacks;
     ULONG T214SavedVendor[5], T214SavedEnables, T214SavedSignals;
+    ULONG T214SavedSource, T214SavedBaseClock;
     USHORT T214SavedClock, T214SavedControl2;
     UCHAR T214SavedHost, T214SavedPower, T214SavedTimeout;
     BOOLEAN T214ContextValid;
