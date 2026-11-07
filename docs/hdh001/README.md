@@ -31,7 +31,7 @@ For the interrupted Home installation tested here, Windows subsequently required
 
 On Lite, TMP451 uses the Mariko -12.5 C remote offset. The optional firmware handoff requests CPU 1996.8 MHz with MAX77812 M4 at 1120 mV, independently of whether the firmware completed the requested EMC change. The fan timer owns both cooling and CPU transitions. At 80 C or after repeated sensor-read failures it restores the saved boot CPU frequency; at 70 C it can resume the request. It does not touch MAX77812 M1/GPU registers.
 
-Use the matching firmware's `cpu_oc`/`ram_oc` INI options and its LitePerformanceCheck application. Parameters records include CpuActualKhz, RamActualKhz, TempSoC, TempBoard, Duty, SensorFailures and status. Build with `docs/hdh001/build-drivers.sh`; the shared INF is version 1.0.0.6. The existing Erista CPU-clock driver is not loaded for the Lite profile.
+Use the matching firmware's `cpu_oc`/`ram_oc` INI options and its LitePerformanceCheck application. Parameters records include CpuActualKhz, RamActualKhz, TempSoC, TempBoard, Duty, SensorFailures and status. Build with `docs/hdh001/build-drivers.sh`; the shared INF is version 1.0.0.7. The existing Erista CPU-clock driver is not loaded for the Lite profile.
 
 Version 1.0.0.6 handles Lite screen-off cooling using the existing display-power notification. It restores the saved boot CPU clock before removing the overclock fan floor. The normal temperature curve stops the fan at 39 C or below and restarts it at 42 C; hot screen-off workloads still get cooling. Failed clock restoration retains the fan floor, and a failed temperature read restarts an already stopped fan immediately. On display wake the fan is set before CPU overclock can resume. A cool system sleep/hibernate D0 exit can also stop the fan; final removal, shutdown and device-only idle retain their existing cooling behavior.
 
@@ -39,94 +39,28 @@ The ARM64 build, CPU/backlight checks, and `python3 drivers/SwitchFan/tests/test
 
 Screen-off cooling does not establish SoC low-power sleep. The observed Modern Standby records had no DRIPS residency, and S4 hibernation is disabled in the tested installation. Physical CPU readback on 1.0.0.5 is 1996.8 MHz and RAM is 1866 MHz, below the requested 2100 MHz. Normal shutdown and native restart have separate owner-confirmed results in the [power status](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/power-performance.md).
 
-## Sleep/wake repair in progress
+## Experimental sleep branch
 
-Input candidates **switchsio 0.2.4.0** and **switchtouch 1.0.1.1** use the
-shared `drivers/common/display_idle.h` policy. Display-off releases their KMDF
-runtime-power references; display-on requests D0 without waiting inside a
-power notification. Their existing suspend/resume callbacks stop polling,
-release input and reinitialize hardware. The power button remains the wake
-source. These changes are compiled and host-tested, not hardware accepted.
+Retained-memory sleep and direct power-button wake are developed only in
+[`sc7-test`](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/sc7-test),
+paired with [WinX `sc7-test`](https://github.com/ruje0504-2/winx/tree/sc7-test).
+The default branch excludes the processor PEP, PMIC wake-interrupt path,
+GPIO/I2C sleep-context experiments and display-driven SIO/touch runtime idle.
+GPIO 1.0.0.4, I2C 1.0.0.5, power button 1.0.0.1, RTC 1.0.0.2,
+touch 1.0.1.0 and SIO 0.2.3.0 retain their pre-experiment implementations.
+S4 hibernation remains removed; SC7 has not passed hardware acceptance.
 
-GPIO **1.0.0.5** implements GpioClx's `SaveContext`/`RestoreContext` contract
-for all ports, following Switchroot's CNF, output/direction, debounce and
-interrupt register set. It restores output latches before enabling outputs,
-then enables interrupts after all configuration is restored. Pending wake
-events are preserved; power callbacks perform no registry I/O while storage
-may still be resuming. ARM64 build, signed catalog checks and actual-callback
-tests for repeated register loss and wake preservation pass. The candidate
-is not installed and does not by itself implement SC7.
-[Switchroot GPIO](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/gpio/gpio-tegra.c#L490)
+Independent fixes remain here: fan 1.0.0.7 keeps registry I/O outside the
+backlight notification lock; Bluetooth 1.0.0.19 retains bounded chip recovery
+and UART host preparation; SD 0.5.0.2 retains DDR200 development and its
+retained-card-power host recovery. None enables platform sleep or depends on
+the experimental PEP. Working battery/shutdown fixes are retained.
 
-```sh
-python3 drivers/Tegra210Gpio/tests/test-context.py
-```
-
-I2C **1.0.0.6** captures the inherited clock source, divisors and stable bus
-timing before leaving D0. Reentry restores only that controller's CAR
-clock/reset bits, then initializes packet mode and checks configuration/FIFO
-completion. It never replays command addresses, FIFO data or a pending SEND
-bit. I2C5 restoration uses the existing SD/PMIC gate. Error diagnostics run
-after releasing that gate, and the old device-register self-tests were removed
-from D0 entry. ARM64 build, signed catalog checks and actual callbacks covering
-all six controller routes, repeated context loss and bounded failures pass.
-The candidate is not installed. It restores the inherited clock selector;
-complete SC7 still requires platform restoration of its parent clocks.
-[Switchroot I2C resume](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/i2c/busses/i2c-tegra.c#L2698)
-
-```sh
-python3 drivers/Tegra210I2c/tests/test-context.py
-```
-
-Power-button **1.0.0.3** distinguishes HID System Power Down from System Wake
-Up using the console display state. The passive-IRQ path unmasks only the
-press edge and sends a complete report/release pair, so releasing the sleep
-button does not create another PMIC wake interrupt. IRQ diagnostics are
-deferred outside the passive interrupt lock; D0/suspend callbacks do not write
-the registry. The older polling profile also selects the wake report when
-the display is off. ARM64 compilation, signing and actual-callback tests for
-rapid cycles, short presses and PMIC mask preservation pass. This candidate
-is not installed; repeated physical wake/lock-screen behavior is unverified.
-[Windows system-control usages](https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input)
-
-The current candidate pairs fan **1.0.0.7**, power button **1.0.0.3**, RTC
-**1.0.0.3**, Bluetooth **1.0.0.19**, and the DDR200 **0.5.0.2** candidate. The fan's display
-power callback no longer writes registry hives while holding its backlight
-lock. The power button drains its timer before I2C power-down and optionally
-uses a passive wake interrupt instead of polling. The RTC unregisters and
-drains its time-change work before its I2C dependency powers down.
-
-The optional `SWITCH_LITE_SLEEP=1` firmware exposes PMU_EXT GSI 118 as a wake
-interrupt. Power-button setup
-applies Switchroot's PMC interrupt inversion, preserves unrelated PMIC masks,
-and restores its original interrupt mask bits at final shutdown. The
-[T214 processor backend](../../drivers/Tegra214Power/README.md) uses PoFx for
-CPU context save/restore and PSCI C7/CC6, but its 0.1.0.0 boot-start package
-blocked cold boot with `0xc000000f`. Exclude it from normal deployment; it requires
-explicit `BUILD_T214_PEP=1` and `SWITCH_LITE_PROCESSOR_IDLE=1` development
-opt-ins. Direct SC7 sleep/wake is not implemented/accepted yet; the S4
-experiment has been removed at the owner's request. Successful compilation and mocked transitions do not prove physical
-sleep, wake, display recovery or lower battery consumption.
-
-Bluetooth 1.0.0.17 addresses a returned-card failure with SafeMode=0 and
-BootPending=0: patch record 150 timed out, but 1.0.0.15 continued and exposed
-a radio that answered no subsequent commands. The replacement validates the
-firmware stream and every command status, uses flow control during download,
-permits one complete retry only after an acknowledged reset, and verifies
-baud-rate fallback. A verified patch is reused across D0 transitions. A failed
-probe reports a device error instead of publishing a working radio.
-
-Focused regressions use the actual driver callbacks:
-
-```sh
-python3 drivers/SwitchBluetooth/tests/test-probe.py
-python3 drivers/SwitchBluetooth/tests/test-cancel.py
-python3 drivers/SwitchPowerButton/tests/test-suspend.py
-python3 drivers/SwitchPowerButton/tests/test-wake.py
-python3 drivers/Tegra214Power/tests/test-processor.py
-python3 drivers/common/tests/test-display-idle.py
-python3 drivers/SwitchFan/tests/test-screenoff.py
-```
+On 2026-11-07 the installed Bluetooth 1.0.0.18 + DDR200 0.5.0.1 combination
+failed to reach the desktop with **INACCESSIBLE_BOOT_DEVICE**, confirmed in
+the owner's photograph. The returned card had crash dumps/error logging
+disabled and no new driver diagnostics; the failing operation remains unknown. No replacement was
+written during the branch split. See the [SD candidate status](../../drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501).
 
 ## Shared battery, RTC, and volume-button support
 

@@ -114,7 +114,7 @@ and T214 tuning registers. Resume restores configuration with SDCLK held off
 until the internal clock is stable; commands, FIFO contents, DMA pointers and
 old interrupt status are never replayed. A clock failure closes the DMA gate.
 This covers controller context loss with card power retained, not a card power
-cycle or a complete SC7 platform restore. Fixed `ContextSaves`,
+cycle or platform-wide power loss. Fixed `ContextSaves`,
 `ContextRestores` and `ResumeStatus` values join the existing diagnostic key.
 
 The ARM64 builds and ASan/UBSan DMA/filter/write-bound/context regressions pass.
@@ -185,7 +185,11 @@ FAT32-visible 0.5.0.1 package was installed with Bluetooth 1.0.0.18 on
 2026-11-07; its SYS/INF/CAT matched on readback. The existing visible-profile
 BL33 and all physical partition boundaries were retained. These are
 **code/build results, not physical DDR200 acceptance or a throughput claim**.
-SC7 and repeated retained-memory wake remain separate unfinished work.
+The owner photographed **INACCESSIBLE_BOOT_DEVICE** before the desktop on
+the next boot. The returned card had crash dumps/error logging disabled and
+no current driver record; the failing operation and cause remain unknown. The readback-verified
+installation is therefore **not a successful boot test**. Platform sleep/wake
+is isolated on [`sc7-test`](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/sc7-test).
 
 Resume candidate **0.5.0.2** also saves the active CAR source and base clock.
 It restores SDMMC1's own enable/reset before accessing a lost controller,
@@ -196,8 +200,9 @@ are changed; old commands, DMA pointers and interrupt status are not replayed.
 PLL, clock-enable, reset, source-readback or internal-clock failure blocks
 data I/O. ARM64 builds for both partition views, actual-callback fault tests
 and signed visible-package checks pass. This candidate is not installed or physically accepted; the card
-still has 0.5.0.1. It covers retained card power, not a complete SC7 platform
-restore or a card power-cycle/re-identification.
+still has the failing 0.5.0.1 combination. It covers retained card power,
+not platform-wide power loss or a card power-cycle/re-identification. It does
+not depend on the experimental PEP and does not establish a cold-boot fix.
 
 ```sh
 python3 drivers/Tegra210Sdhc/tests/test-ddr200.py

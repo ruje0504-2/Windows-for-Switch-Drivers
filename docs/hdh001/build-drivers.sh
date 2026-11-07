@@ -9,18 +9,11 @@ out=${2:?output directory}
 : "${WDF_LIB:?WDK Lib/wdf/kmdf/ARM64/1.15}"
 extra=${WDK_EXTRA_LIB:-$WDK_LIB}
 cc=${CLANG_CL:-clang-cl}; ld=${LLD_LINK:-lld-link}
-for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:switchtouch SwitchPowerButton:switchpwrbtn SwitchFan:switchfan SwitchBattery:switchbattery SwitchRtc:switchrtc SwitchBluetooth:switchbt SwitchSensor:switchsio TegraXusb:tegraxusb Tegra214Power:tegra214pep; do
+for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:switchtouch SwitchPowerButton:switchpwrbtn SwitchFan:switchfan SwitchBattery:switchbattery SwitchRtc:switchrtc SwitchBluetooth:switchbt SwitchSensor:switchsio TegraXusb:tegraxusb; do
     dir=${pair%:*}; name=${pair#*:}; dest="$out/$name"
-    # Keep the experimental boot-start PEP opt-in until its loader failure is fixed.
-    if [ "$dir" = Tegra214Power ] && [ "${BUILD_T214_PEP:-0}" != 1 ]; then
-        continue
-    fi
     driver_dir="$src/drivers/$dir"
     mkdir -p "$dest"
     for file in "$driver_dir/src/$name.c" "$src/tools/kmdf_support.c"; do
-        if [ "$dir" = Tegra214Power ] && [ "$file" = "$src/tools/kmdf_support.c" ]; then
-            continue
-        fi
         obj=${file##*/}; obj=${obj%.c}.obj
         "$cc" --target=aarch64-pc-windows-msvc /nologo /c /kernel /GS- /Gy /Zl /O2 /W4 /WX \
             -Wno-unused-parameter -Wno-microsoft-anon-tag -Wno-ignored-pragma-intrinsic \
@@ -34,19 +27,13 @@ for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:sw
     case "$dir" in
         Tegra210Gpio) set -- "$extra/msgpioclxstub.lib" ;;
         Tegra210I2c)  set -- "$extra/spb/1.0/spbcxstubs.lib" ;;
-        SwitchFan|SwitchRtc|SwitchBluetooth|TegraXusb|Tegra214Power) set -- ;;
+        SwitchFan|SwitchRtc|SwitchBluetooth|TegraXusb) set -- ;;
         SwitchBattery) set -- "$extra/battc.lib" ;;
         SwitchLiteTouch|SwitchPowerButton|SwitchSensor)  set -- "$extra/vhfkm.lib" "$extra/libcntpr.lib" ;;
     esac
-    entry=FxDriverEntry
-    if [ "$dir" = Tegra214Power ]; then
-        entry=DriverEntry
-    else
-        set -- "$dest/kmdf_support.obj" "$WDF_LIB/wdfdriverentry.lib" "$WDF_LIB/wdfldr.lib" "$@"
-    fi
-    "$ld" /nologo /driver /subsystem:native,10.0 /machine:arm64 "/entry:$entry" /nodefaultlib \
+    "$ld" /nologo /driver /subsystem:native,10.0 /machine:arm64 /entry:FxDriverEntry /nodefaultlib \
         /release /opt:ref /opt:icf /tsaware:no /section:.text,ERP /section:.rdata,RP /section:.data,RWP \
         /section:.pdata,RP /section:INIT,ERD /timestamp:0 "/out:$dest/$name.sys" "/map:$dest/$name.map" \
-        "$dest/$name.obj" \
+        "$dest/$name.obj" "$dest/kmdf_support.obj" "$WDF_LIB/wdfdriverentry.lib" "$WDF_LIB/wdfldr.lib" \
         "$WDK_LIB/ntoskrnl.lib" "$WDK_LIB/hal.lib" "$WDK_LIB/ntstrsafe.lib" "$extra/bufferoverflowfastfailk.lib" "$@"
 done
