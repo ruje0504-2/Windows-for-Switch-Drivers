@@ -2,11 +2,11 @@
 
 The Lite build uses the existing Tegra210Gpio and Tegra210I2c drivers and the FTM4 implementation in `drivers/SwitchLiteTouch`. The latter matches ACPI SWOA0502, initializes the controller in Windows, handles quick press/release events and retries HID submission. The public desktop checker is built from `touch-check.c`. Real-hardware testing has confirmed a touch press on the Windows setup dialog. The three-circle TOUCH PASS test is pending.
 
-The build script also produces the existing SwitchPowerButton driver for the optional Lite I2C5/PMIC firmware profile. It reads MAX77620 ONOFFSTAT and ONOFFIRQ. The tested 1.0.0.4 implementation sends HID Power Down while the display is on and Wake Up while it is off. Use SWITCH_LITE_POWER=1 and stage the matching switchpwrbtn.inf with the I2C driver. The independent S0 correction is available in the linked `vulkan-test` source; SC7 is not required.
+The build script also produces the existing SwitchPowerButton driver for the optional Lite I2C5/PMIC firmware profile. It reads MAX77620 ONOFFSTAT and ONOFFIRQ. The tested 1.0.0.4 implementation sends HID Power Down while the display is on and Wake Up while it is off. Use SWITCH_LITE_POWER=1 and stage the matching switchpwrbtn.inf with the I2C driver. The independent 1.0.0.4 S0 correction is included in this branch; SC7 is not required.
 
 The companion Windows firmware provides the GPIO interrupt resources, I²C3, touch power initialization and NTFS boot path. Its Hekate entry is **Windows 11 Lite**. [Firmware source](https://github.com/ruje0504-2/winx/tree/hdh001-hekate-sd)
 
-On 2026-11-08, the owner confirmed that **switchpwrbtn 1.0.0.4** restores the display and normal input after repeated short power-button screen-off/wake cycles. Runtime counters recorded **12 Power Down reports and 12 Wake Up reports**; Windows recorded paired Modern Standby entry/exit events and SSH remained reachable after wake. This is the tested **S0 Modern Standby screen-off/wake** path. It is not SC7 deep sleep or S4 hibernation. Long-duration idle and the Windows sleep-menu entry path are not established by this short-button test. The tested [1.0.0.4 source](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/vulkan-test/drivers/SwitchPowerButton) is on `vulkan-test`; this result does not imply that an older default-branch driver package contains the fix.
+On 2026-11-08, the owner confirmed that **switchpwrbtn 1.0.0.4** restores the display and normal input after repeated short power-button screen-off/wake cycles. Runtime counters recorded **12 Power Down reports and 12 Wake Up reports**; Windows recorded paired Modern Standby entry/exit events and SSH remained reachable after wake. This is the tested **S0 Modern Standby screen-off/wake** path. It is not SC7 deep sleep or S4 hibernation. Long-duration idle and the Windows sleep-menu entry path are not established by this short-button test. The tested [1.0.0.4 source](../../drivers/SwitchPowerButton) is included in this branch. Install the rebuilt 1.0.0.4 package to use the correction.
 
 ## Compile the Lite driver set
 
@@ -50,8 +50,8 @@ paired with [WinX `sc7-test`](https://github.com/ruje0504-2/winx/tree/sc7-test).
 The default branch excludes the processor PEP, PMIC wake-interrupt path,
 GPIO/I2C sleep-context experiments and display-driven SIO/touch runtime idle.
 The default branch retains the pre-experiment GPIO/I2C/RTC/touch/SIO and
-1.0.0.1 power-button source. The separately linked 1.0.0.4 S0 wake correction
-has been tested without importing SC7 code.
+the independently tested 1.0.0.4 S0 power-button correction. No SC7 wake
+interrupt or platform sleep policy is imported.
 S4 hibernation remains removed; SC7 has not passed hardware acceptance.
 
 Independent fixes remain here: fan 1.0.0.7 keeps registry I/O outside the
