@@ -2,11 +2,11 @@
 
 The Lite build uses the existing Tegra210Gpio and Tegra210I2c drivers and the FTM4 implementation in `drivers/SwitchLiteTouch`. The latter matches ACPI SWOA0502, initializes the controller in Windows, handles quick press/release events and retries HID submission. The public desktop checker is built from `touch-check.c`. Real-hardware testing has confirmed a touch press on the Windows setup dialog. The three-circle TOUCH PASS test is pending.
 
-The build script also produces the existing SwitchPowerButton driver for the optional Lite I2C5/PMIC firmware profile. It reads MAX77620 ONOFFSTAT and ONOFFIRQ and submits HID System Power Down input. Use the firmware build with SWITCH_LITE_POWER=1 and stage switchpwrbtn.inf together with the I2C driver. The package compiles for ARM64; its physical button behavior is pending.
+The build script also produces the existing SwitchPowerButton driver for the optional Lite I2C5/PMIC firmware profile. It reads MAX77620 ONOFFSTAT and ONOFFIRQ. The tested 1.0.0.4 implementation sends HID Power Down while the display is on and Wake Up while it is off. Use SWITCH_LITE_POWER=1 and stage the matching switchpwrbtn.inf with the I2C driver. The independent S0 correction is available in the linked `vulkan-test` source; SC7 is not required.
 
 The companion Windows firmware provides the GPIO interrupt resources, I²C3, touch power initialization and NTFS boot path. Its Hekate entry is **Windows 11 Lite**. [Firmware source](https://github.com/ruje0504-2/winx/tree/hdh001-hekate-sd)
 
-**Known sleep/wake issue:** after several short power-button presses or repeated use of Windows sleep controls, the display may freeze, turn black, or the system may hang. A movable pointer does not necessarily mean the lock screen can be unlocked. See the [Stage 6 installation guide](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/README.md#repeated-sleep-and-wake) for the current installation and power behavior.
+On 2026-11-08, the owner confirmed that **switchpwrbtn 1.0.0.4** restores the display and normal input after repeated short power-button screen-off/wake cycles. Runtime counters recorded **12 Power Down reports and 12 Wake Up reports**; Windows recorded paired Modern Standby entry/exit events and SSH remained reachable after wake. This is the tested **S0 Modern Standby screen-off/wake** path. It is not SC7 deep sleep or S4 hibernation. Long-duration idle and the Windows sleep-menu entry path are not established by this short-button test. The tested [1.0.0.4 source](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/vulkan-test/drivers/SwitchPowerButton) is on `vulkan-test`; this result does not imply that an older default-branch driver package contains the fix.
 
 ## Compile the Lite driver set
 
@@ -37,20 +37,21 @@ Use the matching firmware's `cpu_oc`/`ram_oc` INI options and its LitePerformanc
 
 Version 1.0.0.6 handles Lite screen-off cooling using the existing display-power notification. It restores the saved boot CPU clock before removing the overclock fan floor. The normal temperature curve stops the fan at 39 C or below and restarts it at 42 C; hot screen-off workloads still get cooling. Failed clock restoration retains the fan floor, and a failed temperature read restarts an already stopped fan immediately. On display wake the fan is set before CPU overclock can resume. A cool system sleep/hibernate D0 exit can also stop the fan; final removal, shutdown and device-only idle retain their existing cooling behavior.
 
-The ARM64 build, CPU/backlight checks, and `python3 drivers/SwitchFan/tests/test-screenoff.py` pass. The latter exercises the actual timer and D0 callbacks, including clock/fan ordering, invalid temperatures, wake and shutdown isolation. Native catalog generation, signing and offline installation readback passed. On 2026-11-07, the owner confirmed one successful screen-off fan stop and wake recovery with 1.0.0.6, then reported lock-screen/black-screen stalls after repeated cycles. Repeated wake is not accepted. `ScreenOffCooling`, `SleepFanOff`, `CpuOverclockActive`, `Duty` and `DriverVersion` update fixed values under the driver's existing Parameters key; no periodic log files are created.
+The ARM64 build, CPU/backlight checks, and `python3 drivers/SwitchFan/tests/test-screenoff.py` pass. The latter exercises the actual timer and D0 callbacks, including clock/fan ordering, invalid temperatures, wake and shutdown isolation. Native catalog generation, signing and offline installation readback passed. Fan stop/wake and brightness have physical results. On 2026-11-08, repeated short-button screen-off/wake passed after installing switchpwrbtn 1.0.0.4, with normal display and input confirmed by the owner. `ScreenOffCooling`, `SleepFanOff`, `CpuOverclockActive`, `Duty` and `DriverVersion` update fixed values under the driver's existing Parameters key; no periodic log files are created.
 
 Screen-off cooling does not establish SoC low-power sleep. The observed Modern Standby records had no DRIPS residency, and S4 hibernation is disabled in the tested installation. Physical CPU readback on 1.0.0.5 is 1996.8 MHz and RAM is 1866 MHz, below the requested 2100 MHz. Normal shutdown and native restart have separate owner-confirmed results in the [power status](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/power-performance.md).
 
 ## Experimental sleep branch
 
-Retained-memory sleep and direct power-button wake development is paused;
+SC7 retained-memory deep-sleep development is paused;
 its experimental code is preserved only in
 [`sc7-test`](https://github.com/ruje0504-2/Windows-for-Switch-Drivers/tree/sc7-test),
 paired with [WinX `sc7-test`](https://github.com/ruje0504-2/winx/tree/sc7-test).
 The default branch excludes the processor PEP, PMIC wake-interrupt path,
 GPIO/I2C sleep-context experiments and display-driven SIO/touch runtime idle.
-GPIO 1.0.0.4, I2C 1.0.0.5, power button 1.0.0.1, RTC 1.0.0.2,
-touch 1.0.1.0 and SIO 0.2.3.0 retain their pre-experiment implementations.
+The default branch retains the pre-experiment GPIO/I2C/RTC/touch/SIO and
+1.0.0.1 power-button source. The separately linked 1.0.0.4 S0 wake correction
+has been tested without importing SC7 code.
 S4 hibernation remains removed; SC7 has not passed hardware acceptance.
 
 Independent fixes remain here: fan 1.0.0.7 keeps registry I/O outside the
@@ -168,7 +169,7 @@ The owner confirmed silence during Windows Settings playback after enabling star
 
 Windows kept TempPageFile=1 and created no persistent pagefile despite the requested 512–2048 MB setting. Inspection of the target SDPORT binary with Microsoft public symbols found that SdhostQueryRemovability reads `_ADR`/`_RMV` on a slot child, and SdhostPdoDeviceUsageNotification rejects paging for a removable slot. Home had no slot child. The companion `SWITCH_LITE_BOOT_SD=1` profile now describes slot 0 / memory function 0 as a fixed boot device for the Windows session. The card is removable only after shutdown. This changes ACPI metadata, not the SD miniport, card partitions or 80 GiB write limits. Returned-card readback confirms a 536870912-byte pagefile.sys, the 512–2048 MB request and no TempPageFile value; crash-dump/hibernate support is not claimed.
 
-The paired update has been deployed to the existing WINARM installation and the card was safely ejected. Native ARM64 DISM staged SwitchFan 1.0.0.5 and SwitchAudio 1.0.0.9; both existing devnodes are marked for next-boot PnP reinstallation. The performance/brightness application is on the public desktop. The 512–2048 MB pagefile request, disabled extra test tone, completed setup state and BCD were preserved. On the next physical run, the owner confirmed audible output and working brightness buttons. Returned-card readback confirms active audio 1.0.0.9 and fan 1.0.0.5, ConfigFlags=0 for both, and a 512 MiB pagefile. Headphones, jack switching and display wake remain unconfirmed. The owner also confirmed that restart and shutdown still hang; shutdown makes the screen black without actually powering off.
+The paired update has been deployed to the existing WINARM installation and the card was safely ejected. Native ARM64 DISM staged SwitchFan 1.0.0.5 and SwitchAudio 1.0.0.9; both existing devnodes are marked for next-boot PnP reinstallation. The performance/brightness application is on the public desktop. The 512–2048 MB pagefile request, disabled extra test tone, completed setup state and BCD were preserved. On the next physical run, the owner confirmed audible output and working brightness buttons. Returned-card readback confirms active audio 1.0.0.9 and fan 1.0.0.5, ConfigFlags=0 for both, and a 512 MiB pagefile. Headphones and jack switching remain unconfirmed. Later updates passed normal shutdown/native restart, and switchpwrbtn 1.0.0.4 passed repeated short-button screen-off/wake; see the current results above.
 
 References: [Switchroot display/backlight wiring](https://github.com/CTCaer/switch-l4t-platform-t210-nx/blob/linux-5.1.2/kernel-dts/nx-platforms/tegra210-nx-common-disp.dtsi), [B01 pad control](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/linux-5.1.2/drivers/soc/tegra/pmc.c), and [Windows SD slot ACPI objects](https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/other-acpi-namespace-objects#sd-host-controllers-and-devices).
 
