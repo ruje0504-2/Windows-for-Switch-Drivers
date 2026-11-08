@@ -8,6 +8,8 @@ The companion Windows firmware provides the GPIO interrupt resources, I²C3, tou
 
 On 2026-11-08, the owner confirmed that **switchpwrbtn 1.0.0.4** restores the display and normal input after repeated short power-button screen-off/wake cycles. Runtime counters recorded **12 Power Down reports and 12 Wake Up reports**; Windows recorded paired Modern Standby entry/exit events and SSH remained reachable after wake. This is the tested **S0 Modern Standby screen-off/wake** path. It is not SC7 deep sleep or S4 hibernation. Long-duration idle and the Windows sleep-menu entry path are not established by this short-button test. The tested [1.0.0.4 source](../../drivers/SwitchPowerButton) is included in this branch. Install the rebuilt 1.0.0.4 package to use the correction.
 
+A later long screen-off session on battery became unresponsive and required a forced power-off. Windows recorded a Power Button standby exit after about 43 minutes, followed by an unexpected restart. The failing component is not identified; short-button success does not establish reliable long-duration standby.
+
 ## Compile the Lite driver set
 
 Set WDK_INCLUDE to the WDK Include/version directory, WDK_LIB to Lib/version/km/ARM64, WDF_INCLUDE to Include/wdf/kmdf/1.15, and WDF_LIB to Lib/wdf/kmdf/ARM64/1.15. CLANG_CL and LLD_LINK select the tools. WDK_EXTRA_LIB can select the matching SPB, GPIO, VHF, and battery-class (`battc.lib`) libraries. The script builds GPIO, I²C, Lite touch, power button, fan, battery, RTC, and Bluetooth.
@@ -74,11 +76,21 @@ and fallback remain unverified. See the [SD candidate status](../../drivers/Tegr
 
 The companion firmware's `SWITCH_LITE_SYSTEM=1` option exposes the upstream BAT0, RTC0, and BTNS definitions on Lite. It requires the Lite fan/I2C1 and power/I2C5 profiles. Use `drivers/SwitchBattery` and `drivers/SwitchRtc` directly; no Lite-specific source copies are needed.
 
-- `switchbattery` 1.0.0.6 reads MAX17050 (I2C1, 0x36) and BQ24193 status (I2C1, 0x6B). Lite exposes exactly those two connections. The optional third BM92T connection is absent, so the USB-C role-switching timer and charger writes are not activated. The original Erista three-connection path remains available.
+- `switchbattery` 1.0.0.11 reads MAX17050 (I2C1, 0x36) and configures BQ24193 (I2C1, 0x6B). These two connections suffice for battery reporting and charge termination. The optional third BM92T connection is exposed when the companion firmware successfully prepares the USB-C host; it enables the separate PD/role-switching path. Its absence does not disable the charging policy below.
 - `switchrtc` 1.0.0.2 reads MAX77620 RTC (I2C5, 0x68). It learns a private Windows time offset after manual/NTP time changes and applies it on later starts, preserving the hardware calendar used by Horizon.
 - Volume up/down use the Windows inbox ACPI0011 button driver through the existing GPIO driver: PX6/GPIO190 and PX7/GPIO191, with both-edge interrupts. This adds input support, not an audio endpoint.
 
-The ARM64 build, signed SYS/catalog verification, and PnPUtil staging in ARM64 WinPE 22621.1 pass. Sign the final INF/SYS catalogs and use [Install-LiteSystem.cmd](Install-LiteSystem.cmd) beside the `switchfan`, `switchpwrbtn`, `switchbattery`, `switchrtc`, and `switchaudio` package directories. Include LitePerformanceCheck.exe for clock readings and brightness controls. Run it with `online` from an elevated Home prompt, or `offline W:\` from ARM64 maintenance WinPE with WINARM's actual drive letter. Existing GPIO/I²C drivers and the Stage 6 test certificate are prerequisites. Battery readings, learned RTC time across boots, and physical volume-key input remain unverified on HDH-001.
+Sign the final INF/SYS catalogs and use [Install-LiteSystem.cmd](Install-LiteSystem.cmd) beside the `switchfan`, `switchpwrbtn`, `switchbattery`, `switchrtc`, and `switchaudio` package directories. Include LitePerformanceCheck.exe for clock readings and brightness controls. Run it with `online` from an elevated Home prompt, or `offline W:\` from ARM64 maintenance WinPE with WINARM's actual drive letter. Existing GPIO/I²C drivers and the Stage 6 test certificate are prerequisites. Battery capacity, voltage and online/charging state have live Lite results; volume-key acceptance is separate.
+
+### Charge termination
+
+SwitchBattery **1.0.0.11** enables BQ24193 `EN_TERM` and the eight-hour charge safety timer at self-managed I/O startup/restart, including the two-connection profile without BM92T. The chip ends charging using its configured voltage/current thresholds and automatically starts a new charge cycle when voltage falls below the recharge threshold. Eight hours is an abnormal-charge timeout, not a delay before recharging. The driver does not periodically reset that timer or force charging from the displayed percentage.
+
+Only REG05 is changed: voltage, fast-charge current, termination current, input limits, charge/OTG mode and temperature settings are preserved. The watchdog remains disabled. Unrecognized charger IDs, FORCE_20PCT operation, I2C failures and readback mismatch are reported rather than treated as successful configuration. Fixed `ChargeTimerBefore`, `ChargeTimerAfter` and `ChargePolicyStatus` values use the existing Parameters key; no diagnostic service or periodic log file is added.
+
+This differs from [Switchroot's charger policy](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/power/supply/bq2419x-charger.c): Linux initially disables termination and the safety timer and provides a software full-charge termination callback. Windows uses the [BQ24193 autonomous termination and safety timer](https://www.ti.com/lit/ds/symlink/bq24193.pdf), sections 8.3.3.5–6, instead of that Linux framework.
+
+On 2026-11-08, ARM64 compilation, native SYS/catalog signature verification and live PnP installation passed. Runtime version 11 reported successful REG05 readback **0x02 → 0x8A**, with the battery device started and charging at about 91%. This confirms configuration, not a complete full-charge/recharge cycle. Earlier 100% gauge readings with positive current did not show voltage above the configured 4.192 V limit. Run `python3 drivers/SwitchBattery/tests/test-charge-policy.py` and `python3 drivers/SwitchBattery/tests/test-irp-ownership.py` for the register/error-path and battery request-ownership tests.
 
 ## EMC failure and fan-floor correction
 

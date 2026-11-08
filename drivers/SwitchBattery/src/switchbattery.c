@@ -72,7 +72,9 @@
 /* BQ24193 */
 #define BQ_INPUT_SRC     0x00
 #define BQ_PWR_ON        0x01
+#define BQ_CHARGE_CURRENT 0x02
 #define BQ_TERM_TIMER    0x05
+#define BQ_VENDOR_PART   0x0A
 #define BQ_HIZ           0x80u
 #define BQ_IINLIM_MASK   0x07u
 #define BQ_RESET_BITS    0xC0u
@@ -80,6 +82,11 @@
 #define BQ_MODE_CHARGE   0x10u
 #define BQ_MODE_OTG      0x20u
 #define BQ_WATCHDOG_MASK 0x30u
+#define BQ_TERMINATION_ENABLE 0x80u
+#define BQ_SAFETY_TIMER_ENABLE 0x08u
+#define BQ_SAFETY_TIMER_MASK 0x06u
+#define BQ_SAFETY_TIMER_8H 0x02u
+#define BQ_FORCE_20_PERCENT 0x01u
 #define USBC_POLL_MS     500
 #define USBC_STREAK      3
 #define BQ_FAULT         0x09
@@ -272,6 +279,51 @@ static VOID SwBatDisableBqWatchdog(PSWBAT_DEVICE Dev)
     if (NT_SUCCESS(SwBatReadRegs(Dev->Charger, BQ_TERM_TIMER, &Timer, 1)) && (Timer & BQ_WATCHDOG_MASK) != 0) {
         (VOID)SwBatWrite8(Dev->Charger, BQ_TERM_TIMER, (UCHAR)(Timer & ~BQ_WATCHDOG_MASK));
     }
+}
+
+/* BQ24193 datasheet sections 8.3.3.5/6 and REG05. Switchroot's charger
+ * framework enables EN_TERM later via charger_termination_configure(); this
+ * driver has no such software full-charge policy. Let the chip terminate on
+ * its programmed voltage/current criteria and enable its eight-hour safety
+ * timeout. This applies even when ACPI supplies no optional PD connection.
+ * Caller holds Dev->Lock. No charge/OTG mode, limits or JEITA setting changes.
+ */
+static NTSTATUS SwBatConfigureChargePolicy(PSWBAT_DEVICE Dev)
+{
+    UCHAR Part = 0, Current = 0, Timer = 0, Target = 0, Verify = 0;
+    ULONG Before = MAXULONG, After = MAXULONG;
+    NTSTATUS Status = STATUS_DEVICE_NOT_READY;
+    if (Dev->Charger == NULL) goto done;
+    Status = SwBatReadRegs(Dev->Charger, BQ_VENDOR_PART, &Part, 1);
+    if (!NT_SUCCESS(Status)) goto done;
+    if ((Part & 0x38u) != 0x28u) { Status = STATUS_NOT_SUPPORTED; goto done; }
+    Status = SwBatReadRegs(Dev->Charger, BQ_CHARGE_CURRENT, &Current, 1);
+    if (!NT_SUCCESS(Status)) goto done;
+    /* FORCE_20PCT requires software termination per TI. Do not increase its
+     * current limit or silently claim hardware termination in that mode.
+     */
+    if (Current & BQ_FORCE_20_PERCENT) { Status = STATUS_NOT_SUPPORTED; goto done; }
+    Status = SwBatReadRegs(Dev->Charger, BQ_TERM_TIMER, &Timer, 1);
+    if (!NT_SUCCESS(Status)) goto done;
+    Before = Timer;
+    Target = (UCHAR)((Timer & ~(BQ_WATCHDOG_MASK | BQ_SAFETY_TIMER_MASK)) |
+        BQ_TERMINATION_ENABLE | BQ_SAFETY_TIMER_ENABLE | BQ_SAFETY_TIMER_8H);
+    /* Do not rewrite an already configured timer on every resume. */
+    if (Target != Timer) {
+        Status = SwBatWrite8(Dev->Charger, BQ_TERM_TIMER, Target);
+        if (!NT_SUCCESS(Status)) goto done;
+    }
+    Status = SwBatReadRegs(Dev->Charger, BQ_TERM_TIMER, &Verify, 1);
+    if (NT_SUCCESS(Status)) {
+        After = Verify;
+        if (Verify != Target) Status = STATUS_DEVICE_DATA_ERROR;
+    }
+done:
+    /* Fixed initialization results, not a periodic diagnostic or log file. */
+    SwBatTrace(L"ChargeTimerBefore", Before);
+    SwBatTrace(L"ChargeTimerAfter", After);
+    SwBatTrace(L"ChargePolicyStatus", (ULONG)Status);
+    return Status;
 }
 
 static ULONG SwBatLe32(const UCHAR *P)
@@ -860,6 +912,10 @@ NTSTATUS SwBatEvtSelfManagedIoRestart(WDFDEVICE Device)
 {
     PSWBAT_DEVICE Dev = SwBatGetDevice(Device);
     WdfWaitLockAcquire(Dev->Lock, NULL);
+    /* Keep gauge reporting available if the optional charger is inaccessible;
+     * ChargePolicyStatus records the failure instead of claiming it applied.
+     */
+    (VOID)SwBatConfigureChargePolicy(Dev);
     Dev->Stopping = FALSE;
     if (Dev->Timer != NULL) WdfTimerStart(Dev->Timer, WDF_REL_TIMEOUT_IN_MS(POLL_MS));
     if (Dev->Pd != NULL && Dev->UsbcTimer != NULL) {
@@ -976,7 +1032,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwBatParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwBatParamsPath);
     }
-    SwBatTrace(L"DriverVersion", 8);
+    SwBatTrace(L"DriverVersion", 11);
 
     WDF_DRIVER_CONFIG_INIT(&Config, SwBatEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);

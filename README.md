@@ -16,6 +16,7 @@ Drivers for the **HDH-001 (Tegra T214)** port of Windows 11 ARM64. They use the 
 | `switchfan` 1.0.0.6 | The owner confirmed that the fan stops with the screen off and resumes after wake. The driver releases CPU overclock while the screen is off and retains thermal protection. Brightness and 1996.8 MHz CPU / 1866 MHz RAM were observed with 1.0.0.5. Full SoC sleep remains unverified. [Cooling policy](docs/hdh001/README.md#shared-fan-and-t214-clock-control) |
 | `switchpwrbtn` 1.0.0.4 | The owner confirmed repeated power-button S0 screen-off/wake with normal display and input. Runtime counters recorded 12 power and 12 wake reports. This does not implement SC7 deep sleep or S4 hibernation. [Power-button source](drivers/SwitchPowerButton) |
 | `switchbattery` 1.0.0.8 / shutdown | Normal Windows shutdown powered off the tested Lite with Wi-Fi, Bluetooth, audio and gamepad enabled. The battery driver now hands IRPs to battc before KMDF owns them. Native restart subsequently passed on the normal R6 firmware without fan pulses. [Power status](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/power-performance.md) |
+| `switchbattery` 1.0.0.11 / charging | Enables BQ24193 hardware charge termination and an eight-hour safety timer independently of the optional USB-C PD resource. Installed register readback passed; a complete full-charge/recharge cycle remains unverified. [Charging policy](docs/hdh001/README.md#charge-termination) |
 
 Windows uses CPU software rendering only. The Tegra GPU driver for Windows has not been implemented.
 
