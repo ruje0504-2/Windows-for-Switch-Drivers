@@ -18,7 +18,7 @@ Drivers for the **HDH-001 (Tegra T214)** port of Windows 11 ARM64. They use the 
 | `switchbattery` 1.0.0.8 / shutdown | Normal Windows shutdown powered off the tested Lite with Wi-Fi, Bluetooth, audio and gamepad enabled. The battery driver now hands IRPs to battc before KMDF owns them. Native restart subsequently passed on the normal R6 firmware without fan pulses. [Power status](https://github.com/ruje0504-2/winx/blob/hdh001-hekate-sd/docs/hdh001-home/power-performance.md) |
 | `switchbattery` 1.0.0.11 / charging | Enables BQ24193 hardware charge termination and an eight-hour safety timer independently of the optional USB-C PD resource. Installed register readback passed; a complete full-charge/recharge cycle remains unverified. [Charging policy](docs/hdh001/README.md#charge-termination) |
 
-Windows uses CPU software rendering only. The Tegra GPU driver for Windows has not been implemented.
+The experimental Tegra GPU driver and Mesa NVK ICD are maintained together. Native Vulkan triangle readback and Display-class Code 0 were verified on the Lite. DWM acceleration is in development. [GPU project](https://github.com/ruje0504-2/mesa-switch-woa)
 
 The USB-C host package is on the Windows 23H2 card and awaits hardware testing. [USB-C host](drivers/TegraXusb/README.md)
 

@@ -10,6 +10,8 @@ On 2026-11-08, the owner confirmed that **switchpwrbtn 1.0.0.4** restores the di
 
 A later long screen-off session on battery became unresponsive and required a forced power-off. Windows recorded a Power Button standby exit after about 43 minutes, followed by an unexpected restart. The failing component is not identified; short-button success does not establish reliable long-duration standby.
 
+The WDDM miniport, NVK Windows transport and optional GPU PMIC bridge are maintained with the GPU project. [GPU build and board integration](https://github.com/ruje0504-2/mesa-switch-woa/blob/main/tegra-x1-wddm/docs/PORTING.md)
+
 ## Compile the Lite driver set
 
 Set WDK_INCLUDE to the WDK Include/version directory, WDK_LIB to Lib/version/km/ARM64, WDF_INCLUDE to Include/wdf/kmdf/1.15, and WDF_LIB to Lib/wdf/kmdf/ARM64/1.15. CLANG_CL and LLD_LINK select the tools. WDK_EXTRA_LIB can select the matching SPB, GPIO, VHF, and battery-class (`battc.lib`) libraries. The script builds GPIO, I²C, Lite touch, power button, fan, battery, RTC, and Bluetooth.
