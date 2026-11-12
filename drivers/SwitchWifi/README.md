@@ -6,8 +6,9 @@ Windows ARM64 driver for the BCM4356A3 PCIe radio on Switch Lite (HDH-001).
 After the signed update was staged on the SD card and all five installation
 files passed readback, the owner confirmed that Wi-Fi 0.5.7 works. This is
 physical basic-connectivity feedback, not a repeated-reconnect or sustained
-transfer result. Independent live version/hash verification remains pending.
-The staged SYS SHA256 is
+transfer result. SSH at 16:15:57 UTC independently confirms `oem88.inf`,
+version **0.5.7.0**, adapter **Code 0**, and the exact installed SYS hash.
+Installed SYS SHA256 is
 `61fa3cae2790e0e97fe6c94842cdf809f677fe91e7691e92d09d8e95cfb1d865`;
 source commit is `125b618c366ff22863468057243278c2f60a36db`.
 
