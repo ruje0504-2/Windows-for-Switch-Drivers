@@ -2,9 +2,17 @@
 
 Windows ARM64 driver for the BCM4356A3 PCIe radio on Switch Lite (HDH-001).
 
-**0.5.7.0 candidate — disconnect recovery, hardware validation pending.**
+**0.5.7.0 — owner-confirmed usable on the Lite, November 12.**
+After the signed update was staged on the SD card and all five installation
+files passed readback, the owner confirmed that Wi-Fi 0.5.7 works. This is
+physical basic-connectivity feedback, not a repeated-reconnect or sustained
+transfer result. Independent live version/hash verification remains pending.
+The staged SYS SHA256 is
+`61fa3cae2790e0e97fe6c94842cdf809f677fe91e7691e92d09d8e95cfb1d865`;
+source commit is `125b618c366ff22863468057243278c2f60a36db`.
+
 The November 12 SD-card inspection confirms that 0.5.6.0 and its `oem87.inf`
-binding are still present and the SYS hash still matches the installation
+binding were present before this update and the SYS hash matched the installation
 record below. The driver did not disappear from DriverStore. The retained
 report records runtime failure `0xc00000b5` (`STATUS_IO_TIMEOUT`). Two recent
 association attempts fail after approximately ten seconds, followed about
@@ -33,7 +41,8 @@ radio without an event. The corrected timer/readback passes that case,
 `BCME_NOTASSOCIATED`, stale-event/new-link, malformed-reply, real-I/O-failure
 and inactive/deadline controls. All 14 host controls pass with ASan/UBSan,
 and the ARM64 KMDF/WiFiCx driver compiles and links. These results use OS/radio
-substitutes and do not establish physical reconnect or sustained-link stability.
+substitutes. The later owner feedback above confirms basic operation;
+repeated reconnect and sustained-link stability remain unverified.
 
 References checked for this repair:
 
