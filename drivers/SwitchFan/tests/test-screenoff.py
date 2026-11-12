@@ -55,13 +55,13 @@ typedef enum {PowerActionNone,PowerActionSleep,PowerActionHibernate,
 typedef struct {
  UCHAR *Pwm,*Car,*BacklightPwm; ULONG FanOffset,Duty,DisplayState,LastTemp,BootCpuKhz,Brightness;
  void *Sensor,*Timer,*BacklightLock,*Device;
- BOOLEAN IsLite,Stopping,BacklightReady,CpuConfigured,CpuApplied,TempValid;
+ BOOLEAN IsLite,Stopping,BacklightReady,CpuConfigured,CpuApplied,TempValid,CpuOverclockEnabled;
  struct {ULONG CpuKhz;} Config;
  ULONG Failures; LONG Runs;
 } SWFAN_DEVICE,*PSWFAN_DEVICE;
 static PSWFAN_DEVICE SwFanGetDevice(void *d){return d;}
 static PSWFAN_DEVICE SwFanGetTimer(void *d){return d;}
-static ULONG temp=35,sleep_off; static bool sensor_fail,clock_fail;
+static ULONG temp=32,sleep_off; static bool sensor_fail,clock_fail;
 static POWER_ACTION action; static char order[64];static unsigned next;
 static bool backlight_locked;static unsigned registry_writes;
 static void event(char c){assert(next<sizeof(order));order[next++]=c;}
@@ -76,7 +76,7 @@ static NTSTATUS SwCpuApply(PSWFAN_DEVICE d,BOOLEAN oc){
 }
 static ULONG SwCpuKhz(PSWFAN_DEVICE d){return d->CpuApplied?LITE_CPU_KHZ:d->BootCpuKhz;}
 static void SwCpuTemperature(PSWFAN_DEVICE d,ULONG t,BOOLEAN valid){
- if(d->CpuConfigured){d->CpuApplied=valid&&t<80;event(d->CpuApplied?'O':'c');}
+ if(d->CpuConfigured){d->CpuApplied=d->CpuOverclockEnabled&&valid&&t<80;event(d->CpuApplied?'O':'c');}
 }
 static void write_pwm(PULONG p,ULONG v){*p=v;event(v==(PWM_CSR_EN|PWM_ABSOLUTE_OFF)?'f':'F');}
 #define WRITE_REGISTER_ULONG(p,v) write_pwm((p),(v))
@@ -89,12 +89,26 @@ tests = r'''
 static ULONG pwm;
 static void init(PSWFAN_DEVICE d){
  memset(d,0,sizeof(*d));d->Pwm=(UCHAR*)&pwm;d->Device=d;
- d->IsLite=d->BacklightReady=d->CpuConfigured=true;d->CpuApplied=true;
+ d->IsLite=d->BacklightReady=d->CpuConfigured=d->CpuOverclockEnabled=true;d->CpuApplied=true;
  d->Config.CpuKhz=LITE_CPU_KHZ;d->BootCpuKhz=998400;d->DisplayState=1;d->Duty=51;
- temp=35;sensor_fail=clock_fail=false;action=PowerActionNone;sleep_off=0;next=0;
+ temp=32;sensor_fail=clock_fail=false;action=PowerActionNone;sleep_off=0;next=0;
 }
 int main(void){
  SWFAN_DEVICE d;
+ /* Earlier active cooling, reaching full PWM at 45 C. Exercise both
+    threshold edges and hysteresis through the actual timer callback. */
+ init(&d);d.CpuOverclockEnabled=false;d.CpuApplied=false;d.Duty=0;
+ temp=34;SwFanEvtTimer(&d);assert(d.Duty==0);
+ next=0;temp=35;SwFanEvtTimer(&d);assert(d.Duty==76);
+ next=0;temp=33;SwFanEvtTimer(&d);assert(d.Duty==76);
+ next=0;temp=32;SwFanEvtTimer(&d);assert(d.Duty==0);
+ const ULONG thresholds[]={35,38,40,43,45};
+ const ULONG duties[]={76,118,177,212,236};
+ for(unsigned i=0;i<5;i++){
+  next=0;temp=thresholds[i];SwFanEvtTimer(&d);assert(d.Duty==duties[i]);
+  assert(pwm==(PWM_CSR_EN|((PWM_DUTY_MAX-duties[i])<<16)));
+  if(i){next=0;temp=thresholds[i]-1;SwFanEvtTimer(&d);assert(d.Duty==duties[i-1]);}
+ }
  init(&d);SwFanEvtTimer(&d);assert(d.Duty==51&&d.CpuApplied&&order[0]=='F'&&order[1]=='O');
  /* Drop CPU overclock before a cool screen-off session stops the fan. */
  init(&d);d.DisplayState=0;SwFanEvtTimer(&d);
@@ -103,10 +117,18 @@ int main(void){
  d.DisplayState=1;next=0;SwFanEvtTimer(&d);
  assert(d.Duty==51&&d.CpuApplied&&order[0]=='F'&&order[1]=='O');
  /* Screen off is not proof that heat production stopped. */
- init(&d);d.DisplayState=0;temp=55;SwFanEvtTimer(&d);assert(d.Duty==102&&!d.CpuApplied);
+ init(&d);d.DisplayState=0;temp=55;SwFanEvtTimer(&d);assert(d.Duty==236&&!d.CpuApplied);
  init(&d);d.DisplayState=0;clock_fail=true;SwFanEvtTimer(&d);assert(d.Duty==51&&d.CpuApplied);
  init(&d);d.DisplayState=0;d.CpuConfigured=false;SwFanEvtTimer(&d);assert(d.Duty==51);
  init(&d);d.DisplayState=2;SwFanEvtTimer(&d);assert(d.Duty==51&&d.CpuApplied);
+ /* Stock-clock diagnostics retain the ordinary thermal curve on both sides
+    of display-off, without the optional overclock's cooling floor. */
+ init(&d);d.CpuOverclockEnabled=false;d.CpuApplied=false;
+ SwFanEvtTimer(&d);assert(!d.CpuApplied&&d.Duty==0&&d.TempValid);
+ d.DisplayState=0;next=0;SwFanEvtTimer(&d);assert(!d.CpuApplied&&d.Duty==0);
+ d.DisplayState=1;next=0;temp=55;SwFanEvtTimer(&d);assert(!d.CpuApplied&&d.Duty==236);
+ init(&d);d.CpuOverclockEnabled=false;d.CpuApplied=false;d.CpuConfigured=false;
+ SwFanEvtTimer(&d);assert(d.Duty==51); /* Unconfirmed clock retains cooling. */
  /* A failed sensor immediately restarts an already stopped fan. */
  init(&d);d.DisplayState=0;d.Duty=0;sensor_fail=true;SwFanEvtTimer(&d);
  assert(d.Duty==153&&!d.TempValid&&!d.CpuApplied&&d.Failures==1);

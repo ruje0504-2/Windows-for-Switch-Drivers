@@ -34,7 +34,7 @@ static char events[256];static unsigned count;static ULONG *car;
 typedef struct {
  UCHAR *Car; LITE_PERFORMANCE Config; void *Pmic; LARGE_INTEGER PmicIds[2];
  ULONG ConnectionCount,BootPllx,BootCpuKhz;UCHAR BootVout;
- BOOLEAN CpuConfigured,CpuApplied,CpuThrottled;
+ BOOLEAN CpuConfigured,CpuApplied,CpuThrottled,CpuOverclockEnabled;
 } SWFAN_DEVICE,*PSWFAN_DEVICE;
 static PSWFAN_DEVICE SwFanGetDevice(void *d){return d;}
 static void SwFanTrace(const void *n,ULONG v){(void)n;(void)v;}
@@ -67,6 +67,13 @@ int main(void){
  /* Regression: the physical Lite reported NoBpmp while CPU remained 998.4 MHz. */
  d.Config.Status=LitePerfNoBpmp;
  SwCpuPrepare(&d);assert(d.CpuConfigured && d.BootCpuKhz==998400);
+ /* A disabled optional overclock must never program the CPU rail or PLL,
+    including cool samples, invalid sensors and thermal hysteresis changes. */
+ count=0;
+ SwCpuTemperature(&d,35,TRUE);SwCpuTemperature(&d,85,TRUE);
+ SwCpuTemperature(&d,0,FALSE);SwCpuTemperature(&d,70,TRUE);
+ assert(!d.CpuApplied && count==0 && voltage==110 && SwCpuKhz(&d)==998400);
+ d.CpuOverclockEnabled=TRUE;
  count=0;SwCpuTemperature(&d,40,TRUE);
  assert(d.CpuApplied && voltage==174 && SwCpuKhz(&d)==1996800 && events[0]=='V');
  count=0;SwCpuTemperature(&d,80,TRUE);

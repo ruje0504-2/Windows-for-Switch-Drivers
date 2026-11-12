@@ -157,7 +157,7 @@ static VOID SwCpuTemperature(PSWFAN_DEVICE Dev, ULONG Temp, BOOLEAN Valid)
     if (!Dev->CpuConfigured) return;
     if (!Valid || Temp >= 80) Dev->CpuThrottled = TRUE;
     else if (Temp <= 70) Dev->CpuThrottled = FALSE;
-    Status = SwCpuApply(Dev, !Dev->CpuThrottled);
+    Status = SwCpuApply(Dev, Dev->CpuOverclockEnabled && !Dev->CpuThrottled);
     SwFanTrace(L"CpuLastError", (ULONG)Status);
     SwFanTrace(L"CpuThrottled", Dev->CpuThrottled);
     SwFanTrace(L"CpuActualKhz", SwCpuKhz(Dev));

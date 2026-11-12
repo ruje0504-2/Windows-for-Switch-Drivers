@@ -51,7 +51,7 @@ typedef struct _SWFAN_DEVICE {
     WDFIOTARGET Pmic;
     ULONG BootPllx, BootCpuKhz;
     UCHAR BootVout;
-    BOOLEAN CpuConfigured, CpuApplied, CpuThrottled;
+    BOOLEAN CpuConfigured, CpuApplied, CpuThrottled, CpuOverclockEnabled;
     LARGE_INTEGER SensorId;
     WDFIOTARGET Sensor;
     WDFTIMER Timer;
@@ -167,6 +167,9 @@ static NTSTATUS SwFanConfigureSensor(WDFIOTARGET Target)
 }
 
 #include "t214/clock.h"
+#ifdef SWITCH_LITE_GPU
+#include "t214/gpu_pmic.h"
+#endif
 
 /* ------------------------------------------------------------------- fan */
 
@@ -183,13 +186,13 @@ static VOID SwFanSetDuty(PSWFAN_DEVICE Dev, ULONG Duty)
 
 static ULONG SwFanDutyForTemp(ULONG Temp, ULONG Previous)
 {
-    if (Temp >= 68) return 236;
-    if (Temp >= 60) return 153;
-    if (Temp >= 52) return 102;
-    if (Temp >= 47) return 76;
-    if (Temp >= 42) return 51;
-    if (Temp <= 39) return 0;
-    return (Previous > 51) ? 51 : Previous;    /* 40-41 C: hold (at most the 42 C step) */
+    if (Temp >= 45) return 236;
+    if (Temp >= 43) return 212;
+    if (Temp >= 40) return 177;
+    if (Temp >= 38) return 118;
+    if (Temp >= 35) return 76;
+    if (Temp <= 32) return 0;
+    return (Previous > 76) ? 76 : Previous;    /* 33-34 C: hold (at most the 35 C step) */
 }
 
 VOID SwFanEvtTimer(WDFTIMER Timer)
@@ -230,7 +233,7 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
         // Retain the overclock floor until stock CPU clock is confirmed. On
         // wake, restore cooling before SwCpuTemperature can reapply overclock.
         if (Dev->IsLite && Dev->Config.CpuKhz == LITE_CPU_KHZ &&
-            (!ScreenOff || !ClockRestored) && Duty < 51) Duty = 51;
+            ((!ScreenOff && Dev->CpuOverclockEnabled) || !ClockRestored) && Duty < 51) Duty = 51;
         SwFanSetDuty(Dev, Duty);
         if (!ScreenOff) SwCpuTemperature(Dev, Temp, TRUE);
         SwFanTrace(L"TempSoC", Remote);
@@ -308,6 +311,13 @@ VOID SwFanEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutLengt
     UNREFERENCED_PARAMETER(OutLength);
     UNREFERENCED_PARAMETER(InLength);
 
+#ifdef SWITCH_LITE_GPU
+    if (Code == TG_GPU_IOCTL_PMIC) {
+        Status = SwFanGpuPmic(Dev, Request, &Info);
+        WdfRequestCompleteWithInformation(Request, Status, Info);
+        return;
+    }
+#endif
     WdfWaitLockAcquire(Dev->BacklightLock, NULL);
     if (Dev->BacklightPwm == NULL) {
         Status = STATUS_NOT_SUPPORTED;
@@ -425,6 +435,10 @@ NTSTATUS SwFanEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
     if (!Dev->IsLite) Dev->BacklightPwm = Dev->Pwm;
+    /* Read once per hardware start so a diagnostic does not introduce another
+       live clock transition. Zero keeps the inherited CPU clock across lock. */
+    Dev->CpuOverclockEnabled = SwFanReadParam(L"CpuOverclockEnabled", 1) != 0;
+    SwFanTrace(L"CpuOverclockEnabled", Dev->CpuOverclockEnabled);
     SwFanTrace(L"BacklightAvailable", Dev->BacklightPwm != NULL);
     SwFanTrace(L"CpuRequestedKhz", Dev->Config.CpuKhz);
     SwFanTrace(L"RamRequestedKhz", Dev->Config.RamKhz);
@@ -636,7 +650,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwFanParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwFanParamsPath);
     }
-    SwFanTrace(L"DriverVersion", 7);
+    SwFanTrace(L"DriverVersion", 12);
     WDF_DRIVER_CONFIG_INIT(&Config, SwFanEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);
 }
