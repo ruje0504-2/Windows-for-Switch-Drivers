@@ -24,12 +24,19 @@ typedef struct SWIFI_JOIN_SELECTION {
     ULONG Policy, Auth, Names, Offered, Accepted, Rejected;
 } SWIFI_JOIN_SELECTION;
 
+typedef enum SWIFI_LEAVE_PHASE {
+    SwifiLeaveNone, SwifiLeaveCommand, SwifiLeaveEvent,
+    SwifiLeaveReadback, SwifiLeaveConfirmed
+} SWIFI_LEAVE_PHASE;
+
 typedef struct SWIFI_REPORT_DATA {
     ULONG Session, Step, FailedStep, HardwareStep;
     ULONG PacketPath, ReceiveCredits;
     SWIFI_JOIN_SELECTION Selection;
     NTSTATUS HardwareStatus;
     NTSTATUS StepStatus, FailureStatus, ScanStatus, JoinStatus;
+    ULONG LeavePhase;
+    NTSTATUS LeaveStatus;
     ULONG Scans, Attempts, KeyInstalls, KeyRemovals, KeyMask;
     ULONG FilterFlags, FilterCount, FilterMode, IrqSeen, RingSeen;
     NTSTATUS FilterStatus;
@@ -51,6 +58,7 @@ VOID SwifiReportScan(SWIFI_REPORT *R, NTSTATUS Status);
 VOID SwifiReportPacketPath(SWIFI_REPORT *R, ULONG Mask, ULONG ReceiveCredits);
 VOID SwifiReportSelection(SWIFI_REPORT *R, const SWIFI_JOIN_SELECTION *Selection);
 VOID SwifiReportJoin(SWIFI_REPORT *R, NTSTATUS Status);
+VOID SwifiReportLeave(SWIFI_REPORT *R, SWIFI_LEAVE_PHASE Phase, NTSTATUS Status);
 VOID SwifiReportFilter(SWIFI_REPORT *R, ULONG Flags, ULONG Count, ULONG Mode, NTSTATUS Status);
 VOID SwifiReportKeys(SWIFI_REPORT *R, ULONG Mask, ULONG Adds, ULONG Removes);
 VOID SwifiReportRx(SWIFI_REPORT *R, SWIFI_RX_CASE Case);

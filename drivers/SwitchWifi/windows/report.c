@@ -37,7 +37,7 @@ static VOID WriteReport(WDFWORKITEM Work)
         NTSTATUS Status = RtlStringCchPrintfW(Text, RTL_NUMBER_OF(Text),
             L"v=5 session=%u step=%u/%08X failure=%u/%08X scan=%u/%08X join=%u/%08X "
             L"keys=%u add=%u del=%u eth_pre=%u eth_unknown=%u native_clear=%u "
-            L"native_protected=%u meta=%u rssi=%u malformed=%u filter=%X/%u/%u/%08X hw=%u/%08X irq=%u ring=%u select=%X/%X/%u/%u/%u/%X path=%X credits=%u",
+            L"native_protected=%u meta=%u rssi=%u malformed=%u filter=%X/%u/%u/%08X hw=%u/%08X irq=%u ring=%u select=%X/%X/%u/%u/%u/%X path=%X credits=%u leave=%u/%08X",
             D.Session,D.Step,(ULONG)D.StepStatus,D.FailedStep,(ULONG)D.FailureStatus,
             D.Scans,(ULONG)D.ScanStatus,D.Attempts,(ULONG)D.JoinStatus,D.KeyMask,
             D.KeyInstalls,D.KeyRemovals,D.Count[SwifiRxEtherBeforeKey],D.Count[SwifiRxEtherUncertain],
@@ -45,7 +45,8 @@ static VOID WriteReport(WDFWORKITEM Work)
             D.Count[SwifiRxRssiSeen],D.Count[SwifiRxMetaInvalid],
             D.FilterFlags,D.FilterCount,D.FilterMode,(ULONG)D.FilterStatus,D.HardwareStep,(ULONG)D.HardwareStatus,
             D.IrqSeen,D.RingSeen,D.Selection.Policy,D.Selection.Auth,D.Selection.Names,
-            D.Selection.Offered,D.Selection.Accepted,D.Selection.Rejected,D.PacketPath,D.ReceiveCredits);
+            D.Selection.Offered,D.Selection.Accepted,D.Selection.Rejected,D.PacketPath,D.ReceiveCredits,
+            D.LeavePhase,(ULONG)D.LeaveStatus);
         if (NT_SUCCESS(Status)) {
             UNICODE_STRING Value;
             RtlInitUnicodeString(&Value, Text);
@@ -144,6 +145,8 @@ VOID SwifiReportSelection(SWIFI_REPORT *R, const SWIFI_JOIN_SELECTION *Selection
     KIRQL Irql;
     KeAcquireSpinLock(&R->Lock, &Irql);
     R->Data.Selection = *Selection;
+    R->Data.LeavePhase = SwifiLeaveNone;
+    R->Data.LeaveStatus = STATUS_SUCCESS;
     ScheduleLocked(R);
     KeReleaseSpinLock(&R->Lock, Irql);
 }
@@ -156,6 +159,16 @@ VOID SwifiReportJoin(SWIFI_REPORT *R, NTSTATUS Status)
     R->Data.JoinStatus = Status;
     ScheduleLocked(R);
     KeReleaseSpinLock(&R->Lock,Irql);
+}
+
+VOID SwifiReportLeave(SWIFI_REPORT *R, SWIFI_LEAVE_PHASE Phase, NTSTATUS Status)
+{
+    KIRQL Irql;
+    KeAcquireSpinLock(&R->Lock, &Irql);
+    R->Data.LeavePhase = Phase;
+    R->Data.LeaveStatus = Status;
+    ScheduleLocked(R);
+    KeReleaseSpinLock(&R->Lock, Irql);
 }
 
 VOID SwifiReportFilter(SWIFI_REPORT *R, ULONG Flags, ULONG Count, ULONG Mode, NTSTATUS Status)

@@ -590,9 +590,24 @@ static VOID Down(SWIFI_JOIN *J, WDI_ASSOC_STATUS Reason)
     if (!NT_SUCCESS(Status)) Poison(J, Status);
 }
 
+static VOID ConfirmLinkDown(SWIFI_JOIN *J, WDI_ASSOC_STATUS Reason, BOOLEAN DeadlineExpired)
+{
+    BOOLEAN Confirmed;
+    if (DeadlineExpired) SwifiReportLeave(&J->Owner->Report, SwifiLeaveReadback, STATUS_PENDING);
+    NTSTATUS Status = LinkIsDown(J, &Confirmed);
+    if (NT_SUCCESS(Status) && Confirmed) {
+        SwifiReportLeave(&J->Owner->Report, SwifiLeaveConfirmed, STATUS_SUCCESS);
+        Down(J, Reason);
+    } else if (!NT_SUCCESS(Status) || DeadlineExpired) {
+        SwifiReportLeave(&J->Owner->Report, SwifiLeaveReadback,
+            NT_SUCCESS(Status) ? STATUS_IO_TIMEOUT : Status);
+        Poison(J, NT_SUCCESS(Status) ? STATUS_IO_TIMEOUT : Status);
+    }
+}
+
 /* A BCM event has no host transaction tag. After abort/timeout keep this
- * attempt fenced until firmware confirms the disconnect. A timer expiring
- * while fenced requires endpoint recovery before another join may start. */
+ * attempt fenced until firmware confirms the disconnect, either through
+ * the event path or an authoritative BSSID query at the leave deadline. */
 static NTSTATUS BeginLeave(SWIFI_JOIN *J, USHORT Reason, NTSTATUS ConnectStatus, BOOLEAN TryNext)
 {
     if (!J->Active) return STATUS_SUCCESS;
@@ -609,9 +624,12 @@ static NTSTATUS BeginLeave(SWIFI_JOIN *J, USHORT Reason, NTSTATUS ConnectStatus,
     SwifiDataLink(J->Owner, NULL, FALSE, FALSE, FALSE);
     if (!J->Leaving) {
         KeClearEvent(&J->Left);
+        SwifiReportLeave(&J->Owner->Report, SwifiLeaveCommand, STATUS_PENDING);
         NTSTATUS Status = SwifiLeaveFirmware(J->Control, J->Active->Peer, Reason);
+        SwifiReportLeave(&J->Owner->Report, SwifiLeaveCommand, Status);
         if (!NT_SUCCESS(Status)) { Poison(J, Status); return Status; }
         J->Leaving = TRUE;
+        SwifiReportLeave(&J->Owner->Report, SwifiLeaveEvent, STATUS_PENDING);
         Arm(J, 2000);
     }
     return STATUS_SUCCESS;
@@ -622,8 +640,13 @@ static VOID JoinTimeout(WDFTIMER Timer)
     SWIFI_JOIN *J = JoinTimerContext(Timer)->Join;
     WdfWaitLockAcquire(J->Lock, NULL);
     if (J->Online && J->Deadline && KeQueryInterruptTime() >= J->Deadline) {
-        if (J->Leaving) Poison(J, STATUS_IO_TIMEOUT);
-        else (VOID)BeginLeave(J, 3, STATUS_IO_TIMEOUT, TRUE);
+        if (J->Leaving) {
+            /* An aborted association may already be down without producing
+             * another link-down event. Missing that event is not itself an
+             * endpoint failure. Use the same firmware readback as the event
+             * path before releasing this attempt or requesting recovery. */
+            ConfirmLinkDown(J, WDI_ASSOC_STATUS_DISASSOCIATED_BY_HOST, TRUE);
+        } else (VOID)BeginLeave(J, 3, STATUS_IO_TIMEOUT, TRUE);
     }
     WdfWaitLockRelease(J->Lock);
 }
@@ -987,22 +1010,16 @@ BOOLEAN SwifiJoinEvent(SWIFI_JOIN *J, const swifi_event_completion *E)
         goto Done;
     }
     if (J->Leaving) {
-        if (DownEvent) {
-            BOOLEAN Confirmed;
-            NTSTATUS Check = LinkIsDown(J, &Confirmed);
-            if (NT_SUCCESS(Check) && Confirmed)
-                Down(J, WDI_ASSOC_STATUS_DISASSOCIATED_BY_HOST);
-            else if (!NT_SUCCESS(Check)) Poison(J, Check);
-        }
+        if (DownEvent)
+            ConfirmLinkDown(J, WDI_ASSOC_STATUS_DISASSOCIATED_BY_HOST, FALSE);
         goto Done;
     }
     if (J->Associated) {
         if (DownEvent) {
-            BOOLEAN Confirmed = Same;
-            NTSTATUS Check = Same ? STATUS_SUCCESS : LinkIsDown(J, &Confirmed);
-            if (!NT_SUCCESS(Check)) Poison(J, Check);
-            else if (Confirmed) Down(J, Type == 5 || Type == 6 ?
-                WDI_ASSOC_STATUS_PEER_DEAUTHENTICATED : WDI_ASSOC_STATUS_PEER_DISASSOCIATED);
+            /* A late event from the preceding attempt can name this same AP.
+             * Confirm current firmware state before dropping a new link. */
+            ConfirmLinkDown(J, Type == 5 || Type == 6 ?
+                WDI_ASSOC_STATUS_PEER_DEAUTHENTICATED : WDI_ASSOC_STATUS_PEER_DISASSOCIATED, FALSE);
         }
         goto Done;
     }

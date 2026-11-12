@@ -2,6 +2,55 @@
 
 Windows ARM64 driver for the BCM4356A3 PCIe radio on Switch Lite (HDH-001).
 
+**0.5.7.0 candidate — disconnect recovery, hardware validation pending.**
+The November 12 SD-card inspection confirms that 0.5.6.0 and its `oem87.inf`
+binding are still present and the SYS hash still matches the installation
+record below. The driver did not disappear from DriverStore. The retained
+report records runtime failure `0xc00000b5` (`STATUS_IO_TIMEOUT`). Two recent
+association attempts fail after approximately ten seconds, followed about
+two seconds later by Kernel-PnP device-management event 1011 for the adapter.
+
+The source has a definite failure-policy defect: after sending a disconnect,
+the two-second timer unconditionally poisons the adapter if no terminal
+firmware event arrives, even when the radio has already disconnected.
+0.5.7 queries `WLC_GET_BSSID` at that deadline. A zero BSSID or
+`BCME_NOTASSOCIATED` completes normal disconnect cleanup and permits another
+connection; a still-associated, malformed or failed query retains the failure
+path. Down-events also confirm current firmware state so a delayed event for
+the previous attempt cannot discard a newly established link to the same AP.
+The hardware/DMA failure teardown and `WdfDeviceFailedNoRestart` policy are
+unchanged; a lost event alone no longer establishes an unrecoverable failure.
+
+The previous report cannot distinguish a disconnect-command timeout from a
+missing disconnect-event timeout. Their two-second intervals can look alike;
+the offline records do not prove which occurred on this device or explain
+the initial connection drop. The appended `leave=phase/status` report now
+distinguishes command execution (1), waiting for its event (2), state readback
+(3), and confirmed disconnect (4); 0 means no leave in the current attempt.
+
+The old timer fails an actual-function host regression for an already-down
+radio without an event. The corrected timer/readback passes that case,
+`BCME_NOTASSOCIATED`, stale-event/new-link, malformed-reply, real-I/O-failure
+and inactive/deadline controls. All 14 host controls pass with ASan/UBSan,
+and the ARM64 KMDF/WiFiCx driver compiles and links. These results use OS/radio
+substitutes and do not establish physical reconnect or sustained-link stability.
+
+References checked for this repair:
+
+- [Microsoft WiFiCx sample](https://github.com/microsoft/Windows-driver-samples/tree/d49bb7d72f3651952b2b6e4ad28d14fe2247eb69/network/wlan/wificx):
+  `WifiIhvDisconnect` and `WDI_TASK_DISCONNECT` transition handling illustrate
+  connection cleanup and M3/M4 completion. Its radio is simulated, not BCM4356.
+- [WDF failure reporting](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdfdevice/nf-wdfdevice-wdfdevicesetfailed):
+  device failure is for an unrecoverable hardware/software error; distinguish
+  that from an ordinary failed association or completed disconnect.
+- [Switchroot brcmfmac](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c):
+  same-radio protocol reference; `brcmf_cfg80211_disconnect` and
+  `brcmf_link_down` clear connection state independently of device removal.
+- [Lenovo BCM4356 PCIe Windows package](https://support.lenovo.com/us/en/downloads/ds105863-broadcom-bcm4356-wireless-lan-driver-for-windows-10-64-bit-thinkpad):
+  same-chip Windows 10 64-bit package, version 1.558.53.1. It is a binary
+  distribution, not an ARM64 source implementation. The GitHub search did
+  not locate a usable same-chip Windows ARM64 open-source driver.
+
 **2026-11-12 physical result:** the owner reports that Wi-Fi is substantially
 recovered with **0.5.6.0**. A subsequent SSH session independently confirmed
 that Windows installed `oem87.inf` on `ACPI\SWOA0D01\0` and that the selected

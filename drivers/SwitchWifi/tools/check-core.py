@@ -46,6 +46,22 @@ if not args.build_only:
         "-fno-sanitize-recover=all", "-I" + str(args.out), *map(str, sources),
         str(root / "tests/test_receive_reconnect.c"), "-o", str(receive_test)], check=True)
     subprocess.run([str(receive_test)], check=True)
+    join = (root / "windows/join.c").read_text()
+    join_functions = []
+    for signature in ("static NTSTATUS LinkIsDown(", "static VOID ConfirmLinkDown(", "static VOID JoinTimeout("):
+        start = join.index(signature)
+        brace = join.index("{", start)
+        end, depth = brace + 1, 1
+        while depth:
+            depth += (join[end] == "{") - (join[end] == "}")
+            end += 1
+        join_functions.append(join[start:end])
+    (args.out / "join-timeout-under-test.inc").write_text("\n\n".join(join_functions) + "\n")
+    join_test = args.out / "test-join-timeout"
+    subprocess.run(common + ["-g", "-O1", "-fsanitize=address,undefined",
+        "-fno-sanitize-recover=all", "-I" + str(args.out),
+        str(root / "tests/test_join_timeout.c"), "-o", str(join_test)], check=True)
+    subprocess.run([str(join_test)], check=True)
 kmdf = args.kmdf_include or args.wdk_include.parent / "wdf/kmdf/1.33"
 kernel_cc = Path(args.cc).with_name("clang-cl" + Path(args.cc).suffix)
 kernel_flags = [str(kernel_cc), "--target=aarch64-pc-windows-msvc", "/c",
