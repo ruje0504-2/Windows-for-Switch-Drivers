@@ -3,7 +3,8 @@
 #include "join_firmware.h"
 
 typedef struct KEY_CHANGE {
-    UCHAR Slot, Id;
+    UCHAR Slot, Id, KeyLength, Material[32];
+    swifi_cipher Cipher;
     const UCHAR *Key, *Pn;
     BOOLEAN Skip;
 } KEY_CHANGE;
@@ -25,11 +26,16 @@ static ULONG KeyMask(const SWIFI_STATION_KEYS *Keys)
 }
 
 static NTSTATUS Identify(WDI_CIPHER_KEY_TYPE_STRUCT Type, const WDI_MAC_ADDRESS *Address,
-    const UCHAR Peer[6], BOOLEAN HasId, ULONG Id, KEY_CHANGE *Change)
+    const UCHAR Peer[6], swifi_cipher GroupCipher, BOOLEAN HasId, ULONG Id, KEY_CHANGE *Change)
 {
-    if (Type.CipherAlgorithm != WDI_CIPHER_ALGO_CCMP || Type.Static ||
+    swifi_cipher Cipher = Type.CipherAlgorithm == WDI_CIPHER_ALGO_CCMP ? SWIFI_CIPHER_CCMP :
+        Type.CipherAlgorithm == WDI_CIPHER_ALGO_TKIP ? SWIFI_CIPHER_TKIP : SWIFI_CIPHER_NONE;
+    if (!Cipher || Type.Static ||
         (Type.KeyType != WDI_CIPHER_KEY_TYPE_PAIRWISE_KEY && Type.KeyType != WDI_CIPHER_KEY_TYPE_GROUP_KEY))
         return STATUS_NOT_SUPPORTED;
+    if (Cipher != (Type.KeyType == WDI_CIPHER_KEY_TYPE_PAIRWISE_KEY ? SWIFI_CIPHER_CCMP : GroupCipher))
+        return STATUS_NOT_SUPPORTED;
+    Change->Cipher = Cipher;
     if (HasId && Id > 3) return STATUS_INVALID_PARAMETER;
     static const UCHAR Broadcast[6] = {255,255,255,255,255,255};
     if (Address && !RtlEqualMemory(Address->Address, Peer, 6) &&
@@ -58,20 +64,22 @@ static NTSTATUS Apply(SWIFI_STATION_KEYS *Keys, SWIFI_DEVICE *D, const UCHAR Pee
         Seen |= 1u << C->Slot;
         if (!Add) {
             if (!Slot->Present) C->Skip = TRUE;
-            else if (Slot->Id != C->Id) return STATUS_INVALID_PARAMETER;
+            else if (Slot->Id != C->Id || Slot->Cipher != C->Cipher) return STATUS_INVALID_PARAMETER;
             continue;
         }
         for (ULONG J = 0; J < RTL_NUMBER_OF(Keys->Slot); ++J) {
             SWIFI_KEY_SLOT *Old = &Keys->Slot[J];
-            if (!Old->Known || !RtlEqualMemory(Old->Key, C->Key, 16)) continue;
+            if (!Old->Known || Old->Cipher != C->Cipher || !RtlEqualMemory(Old->Key, C->Key, 16)) continue;
             /* Reinstalling the same TK resets hardware packet numbers. Preserve
              * live counters on an idempotent retry, reject an unsafe rebind. */
-            if (!swifi_keep_key_on_retry(J == C->Slot && Old->Id == C->Id, Old->Present, C->Pn, Old->Pn))
+            if (Old->KeyLength != C->KeyLength || !RtlEqualMemory(Old->Key, C->Key, C->KeyLength) ||
+                !swifi_keep_key_on_retry(J == C->Slot && Old->Id == C->Id, Old->Present, C->Pn, Old->Pn))
                 return STATUS_INVALID_PARAMETER;
             C->Skip = TRUE;
         }
         for (ULONG J = 0; J < I; ++J)
-            if (RtlEqualMemory(C->Key, Changes[J].Key, 16)) return STATUS_INVALID_PARAMETER;
+            if (C->Cipher == Changes[J].Cipher && RtlEqualMemory(C->Key, Changes[J].Key, 16))
+                return STATUS_INVALID_PARAMETER;
         if (Slot->Present && Slot->Id != C->Id) return STATUS_NOT_SUPPORTED;
     }
     ULONG First = 0;
@@ -82,14 +90,17 @@ static NTSTATUS Apply(SWIFI_STATION_KEYS *Keys, SWIFI_DEVICE *D, const UCHAR Pee
     for (ULONG I = First; I < Count; ++I) {
         KEY_CHANGE *C = &Changes[I];
         if (C->Skip) continue;
-        Status = SwifiJoinKey(&D->Hw.Control, C->Id, C->Slot == 4 ? Peer : NULL, C->Key, C->Pn);
+        Status = SwifiJoinKey(&D->Hw.Control, C->Id, C->Slot == 4 ? Peer : NULL,
+            C->Cipher, C->Key, C->KeyLength, C->Pn);
         if (!NT_SUCCESS(Status)) { *Uncertain = TRUE; return Status; }
         SWIFI_KEY_SLOT *Slot = &Keys->Slot[C->Slot];
         Slot->Present = Add;
         if (Add) {
             Slot->Known = TRUE;
             Slot->Id = C->Id;
-            RtlCopyMemory(Slot->Key, C->Key, 16);
+            Slot->Cipher = C->Cipher;
+            Slot->KeyLength = C->KeyLength;
+            RtlCopyMemory(Slot->Key, C->Key, C->KeyLength);
             RtlCopyMemory(Slot->Pn, C->Pn, 6);
         }
         SwifiReportKeys(&D->Report, KeyMask(Keys), Add ? 1 : 0, Add ? 0 : 1);
@@ -98,7 +109,7 @@ static NTSTATUS Apply(SWIFI_STATION_KEYS *Keys, SWIFI_DEVICE *D, const UCHAR Pee
 }
 
 NTSTATUS SwifiKeysChange(SWIFI_STATION_KEYS *Keys, SWIFI_DEVICE *D, const UCHAR Peer[6],
-    TLV_CONTEXT *Tlv, WDI_MESSAGE_HEADER *H, ULONG Bytes, BOOLEAN Add, BOOLEAN *Uncertain)
+    swifi_cipher GroupCipher, TLV_CONTEXT *Tlv, WDI_MESSAGE_HEADER *H, ULONG Bytes, BOOLEAN Add, BOOLEAN *Uncertain)
 {
     KEY_CHANGE Changes[5] = {0};
     NTSTATUS Status;
@@ -111,15 +122,30 @@ NTSTATUS SwifiKeysChange(SWIFI_STATION_KEYS *Keys, SWIFI_DEVICE *D, const UCHAR 
         if (NT_SUCCESS(Status) && (!Count || Count > RTL_NUMBER_OF(Changes))) Status = STATUS_INVALID_PARAMETER;
         for (ULONG I = 0; NT_SUCCESS(Status) && I < Count; ++I) {
             WDI_SET_ADD_CIPHER_KEYS_CONTAINER *K = &P.SetCipherKey.pElements[I];
-            if (!K->Optional.CCMPKey_IsPresent || K->CCMPKey.ElementCount != 16 ||
-                !K->Optional.ReceiveSequenceCount_IsPresent || K->Optional.LinkId_IsPresent ||
-                K->Optional.TKIPInfo_IsPresent || K->Optional.GCMPKey_IsPresent || K->Optional.WEPKey_IsPresent ||
+            if (!K->Optional.ReceiveSequenceCount_IsPresent || K->Optional.LinkId_IsPresent ||
+                K->Optional.GCMPKey_IsPresent || K->Optional.WEPKey_IsPresent ||
                 K->Optional.BIPKey_IsPresent || K->Optional.IHVKey_IsPresent || K->Optional.GCMP_256Key_IsPresent ||
                 K->Optional.BIP_GMAC_256Key_IsPresent) { Status = STATUS_NOT_SUPPORTED; break; }
             Status = Identify(K->CipherKeyTypeInfo, K->Optional.PeerMacAddress_IsPresent ? &K->PeerMacAddress : NULL,
-                Peer, K->Optional.CipherKeyID_IsPresent, K->CipherKeyID.CipherKeyID, &Changes[I]);
-            Changes[I].Key = K->CCMPKey.pElements;
-            Changes[I].Pn = K->ReceiveSequenceCount.ReceiveSequenceCount;
+                Peer, GroupCipher, K->Optional.CipherKeyID_IsPresent, K->CipherKeyID.CipherKeyID, &Changes[I]);
+            if (!NT_SUCCESS(Status)) break;
+            KEY_CHANGE *C = &Changes[I];
+            if (C->Cipher == SWIFI_CIPHER_CCMP) {
+                if (!K->Optional.CCMPKey_IsPresent || K->CCMPKey.ElementCount != 16 ||
+                    K->Optional.TKIPInfo_IsPresent) { Status = STATUS_INVALID_PARAMETER; break; }
+                C->Key = K->CCMPKey.pElements;
+                C->KeyLength = 16;
+            } else {
+                if (!K->Optional.TKIPInfo_IsPresent || K->Optional.CCMPKey_IsPresent ||
+                    K->TKIPInfo.TKIPKey.ElementCount != 16 || K->TKIPInfo.TKIPMIC.ElementCount != 16) {
+                    Status = STATUS_INVALID_PARAMETER; break;
+                }
+                RtlCopyMemory(C->Material, K->TKIPInfo.TKIPKey.pElements, 16);
+                RtlCopyMemory(C->Material+16, K->TKIPInfo.TKIPMIC.pElements, 16);
+                C->Key = C->Material;
+                C->KeyLength = 32;
+            }
+            C->Pn = K->ReceiveSequenceCount.ReceiveSequenceCount;
         }
         if (NT_SUCCESS(Status)) Status = Apply(Keys, D, Peer, Changes, Count, TRUE, Uncertain);
         CleanupParsedWdiSetAddCipherKeysToIhv(&P);
@@ -132,11 +158,12 @@ NTSTATUS SwifiKeysChange(SWIFI_STATION_KEYS *Keys, SWIFI_DEVICE *D, const UCHAR 
             WDI_SET_DELETE_CIPHER_KEYS_CONTAINER *K = &P.CipherKeyInfo.pElements[I];
             if (K->Optional.LinkId_IsPresent) { Status = STATUS_NOT_SUPPORTED; break; }
             Status = Identify(K->CipherKeyTypeInfo, K->Optional.PeerMacAddress_IsPresent ? &K->PeerMacAddress : NULL,
-                Peer, K->Optional.CipherKeyID_IsPresent, K->CipherKeyID.CipherKeyID, &Changes[I]);
+                Peer, GroupCipher, K->Optional.CipherKeyID_IsPresent, K->CipherKeyID.CipherKeyID, &Changes[I]);
         }
         if (NT_SUCCESS(Status)) Status = Apply(Keys, D, Peer, Changes, Count, FALSE, Uncertain);
         CleanupParsedWdiSetDeleteCipherKeysToIhv(&P);
     }
+    RtlSecureZeroMemory(Changes, sizeof(Changes));
     return Status;
 }
 
@@ -146,7 +173,8 @@ NTSTATUS SwifiKeysClear(SWIFI_STATION_KEYS *Keys, SWIFI_DEVICE *D, const UCHAR *
     for (ULONG I = 0; I < RTL_NUMBER_OF(Keys->Slot); ++I) {
         SWIFI_KEY_SLOT *Slot = &Keys->Slot[I];
         if (Slot->Present) {
-            NTSTATUS Status = SwifiJoinKey(&D->Hw.Control, Slot->Id, I == 4 ? Peer : NULL, NULL, NULL);
+            NTSTATUS Status = SwifiJoinKey(&D->Hw.Control, Slot->Id, I == 4 ? Peer : NULL,
+                Slot->Cipher, NULL, 0, NULL);
             if (!NT_SUCCESS(Status) && Status != STATUS_NOT_FOUND) {
                 Result = Status;
             } else {

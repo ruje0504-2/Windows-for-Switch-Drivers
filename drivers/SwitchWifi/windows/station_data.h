@@ -23,6 +23,7 @@ typedef struct SWIFI_TX_BUFFER {
 
 typedef struct SWIFI_RX_BUFFER {
     LIST_ENTRY Link;
+    /* Epochs describe a completed packet, never an outstanding empty RXPOST. */
     ULONG Epoch, KeyEpoch, AcceptedKeyEpoch;
     BOOLEAN KeyInFlight;
     USHORT Offset, Length;
@@ -49,7 +50,6 @@ typedef struct SWIFI_STATION_DATA {
     swifi_eapol_tx KeyTx;
     KEVENT EapolIdle;
     ULONG Epoch, KeyEpoch, TxProgress, PacketPath;
-    BOOLEAN FirstJoin;
     BOOLEAN MetadataSeen, RssiSeen, BadMetadataSeen, NativeProtectedSeen;
     BOOLEAN SampleValid;
     LONG SampleDbm;

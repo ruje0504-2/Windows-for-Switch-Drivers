@@ -14,18 +14,38 @@ parser.add_argument("--sdk-include", type=Path,
 parser.add_argument("--kmdf-include", type=Path,
                     help="KMDF headers; defaults to WDK Include/wdf/kmdf/1.33")
 parser.add_argument("--out", type=Path, required=True)
+parser.add_argument("--build-only", action="store_true", help="cross-compile without running host controls")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 args.out.mkdir(parents=True, exist_ok=True)
 sources = [root / "core/msgbuf_data.c", root / "core/msgbuf_ring.c", root / "core/msgbuf_control.c",
            root / "core/phy_rates.c", root / "core/rx_metadata.c", root / "core/receive_filter.c", root / "core/pci_intx.c", root / "core/station_frame.c", root / "core/station_security.c"]
 common = [args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror"]
-for name in ("data", "ring", "control", "erom", "nvram", "rates", "escan", "frame", "security", "metadata", "filter", "intx"):
-    test = args.out / f"test-msgbuf-{name}"
+if not args.build_only:
+    for name in ("data", "ring", "control", "erom", "nvram", "rates", "escan", "frame", "security", "metadata", "filter", "intx"):
+        test = args.out / f"test-msgbuf-{name}"
+        subprocess.run(common + ["-g", "-O1", "-fsanitize=address,undefined",
+            "-fno-sanitize-recover=all", *map(str, sources), str(root / f"tests/test_{name}.c"),
+            "-o", str(test)], check=True)
+        subprocess.run([str(test)], check=True)
+    # Compile the production Windows receive/join/indication bodies with a host
+    # platform shim. SDK layout and the complete driver are cross-compiled below.
+    station = (root / "windows/station_data.c").read_text()
+    receive_functions = []
+    for name in ("RecycleRx", "DropReady", "RxComplete", "SwifiDataBeginJoin", "SwifiDataLink", "AdvanceRx"):
+        start = station.index("VOID " + name + "(")
+        brace = station.index("{", start)
+        end, depth = brace + 1, 1
+        while depth:
+            depth += (station[end] == "{") - (station[end] == "}")
+            end += 1
+        receive_functions.append(station[start:end])
+    (args.out / "receive-path-under-test.inc").write_text("\n\n".join(receive_functions) + "\n")
+    receive_test = args.out / "test-receive-reconnect"
     subprocess.run(common + ["-g", "-O1", "-fsanitize=address,undefined",
-        "-fno-sanitize-recover=all", *map(str, sources), str(root / f"tests/test_{name}.c"),
-        "-o", str(test)], check=True)
-    subprocess.run([str(test)], check=True)
+        "-fno-sanitize-recover=all", "-I" + str(args.out), *map(str, sources),
+        str(root / "tests/test_receive_reconnect.c"), "-o", str(receive_test)], check=True)
+    subprocess.run([str(receive_test)], check=True)
 kmdf = args.kmdf_include or args.wdk_include.parent / "wdf/kmdf/1.33"
 kernel_cc = Path(args.cc).with_name("clang-cl" + Path(args.cc).suffix)
 kernel_flags = [str(kernel_cc), "--target=aarch64-pc-windows-msvc", "/c",
@@ -38,6 +58,7 @@ kernel_flags = [str(kernel_cc), "--target=aarch64-pc-windows-msvc", "/c",
     "/DNTDDI_VERSION=0x0A00000C", "/D_WIN32_WINNT=0x0A00",
     f"/imsvc{args.wdk_include / 'km/crt'}", f"/imsvc{args.wdk_include / 'km'}",
     f"/imsvc{(args.sdk_include or args.wdk_include) / 'shared'}", f"/imsvc{kmdf}",
+    f"/imsvc{args.wdk_include / 'shared'}",
     f"/imsvc{(args.sdk_include or args.wdk_include) / 'shared/netcx/shared/1.0'}",
     f"/imsvc{args.wdk_include / 'km/wificx/1.0'}",
     f"/imsvc{args.wdk_include / 'km/wlan/2.0'}",

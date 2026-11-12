@@ -30,7 +30,7 @@ struct SWIFI_JOIN {
     WDFWAITLOCK Lock;
     WDFTIMER Timer;
     KEVENT Left;
-    ULONGLONG Deadline, ConnectEnd;
+    ULONGLONG Deadline, ConnectEnd, MicBlockedUntil;
     WDI_PORT_ID Port, PeerPort, ResetPort;
     UCHAR ResetPeer[6];
     BOOLEAN ResetNotice;
@@ -127,7 +127,7 @@ static NTSTATUS AssocResult(SWIFI_JOIN *J, WDI_ASSOC_STATUS Result, ULONG Firmwa
     WDI_INDICATION_ASSOCIATION_RESULT_LIST List = {0};
     WDI_ASSOCIATION_RESULT_CONTAINER Entry = {0};
     WDI_ASSOCIATION_RESULT_PARAMETERS *P = &Entry.AssociationResultParameters;
-    BOOLEAN Secure = C->Profile.auth == SWIFI_AUTH_PSK_CCMP;
+    BOOLEAN Secure = C->Profile.auth != SWIFI_AUTH_OPEN;
     WDI_PHY_TYPE Phy = WDI_PHY_TYPE_UNKNOWN;
     List.AssociationResults.ElementCount = 1;
     List.AssociationResults.pElements = &Entry;
@@ -135,7 +135,9 @@ static NTSTATUS AssocResult(SWIFI_JOIN *J, WDI_ASSOC_STATUS Result, ULONG Firmwa
     P->AssociationStatus = Result;
     P->IHVAssociationStatus = FirmwareReason;
     P->AuthAlgorithm = Secure ? WDI_AUTH_ALGO_RSNA_PSK : WDI_AUTH_ALGO_80211_OPEN;
-    P->UnicastCipherAlgorithm = P->MulticastDataCipherAlgorithm = Secure ? WDI_CIPHER_ALGO_CCMP : WDI_CIPHER_ALGO_NONE;
+    P->UnicastCipherAlgorithm = Secure ? WDI_CIPHER_ALGO_CCMP : WDI_CIPHER_ALGO_NONE;
+    P->MulticastDataCipherAlgorithm = !Secure ? WDI_CIPHER_ALGO_NONE :
+        swifi_group_cipher(C->Profile.auth) == SWIFI_CIPHER_TKIP ? WDI_CIPHER_ALGO_TKIP : WDI_CIPHER_ALGO_CCMP;
     P->MulticastMgmtCipherAlgorithm = WDI_CIPHER_ALGO_NONE;
     P->BandID = C->Channel <= 14 ? WDI_BAND_ID_2400 : WDI_BAND_ID_5000;
     P->DSInfo = WDI_DS_UNKNOWN;
@@ -316,7 +318,8 @@ static BOOLEAN Listed(const WDI_ADDRESS_LIST_CONTAINER *List, const UCHAR *Mac)
 
 static unsigned AuthMask(const WDI_CONNECT_PARAMETERS_CONTAINER *C)
 {
-    BOOLEAN Open = FALSE, Psk = FALSE, PairNone = FALSE, GroupNone = FALSE, PairCcmp = FALSE, GroupCcmp = FALSE;
+    BOOLEAN Open = FALSE, Psk = FALSE, PairNone = FALSE, GroupNone = FALSE;
+    BOOLEAN PairCcmp = FALSE, GroupCcmp = FALSE, GroupTkip = FALSE;
     for (ULONG I = 0; I < C->AuthenticationAlgorithms.ElementCount; ++I) {
         WDI_AUTH_ALGORITHM A = C->AuthenticationAlgorithms.pElements[I];
         Open |= A == WDI_AUTH_ALGO_80211_OPEN;
@@ -330,6 +333,7 @@ static unsigned AuthMask(const WDI_CONNECT_PARAMETERS_CONTAINER *C)
     for (ULONG I = 0; I < C->MulticastCipherAlgorithms.ElementCount; ++I) {
         WDI_CIPHER_ALGORITHM A = C->MulticastCipherAlgorithms.pElements[I];
         GroupCcmp |= A == WDI_CIPHER_ALGO_CCMP;
+        GroupTkip |= A == WDI_CIPHER_ALGO_TKIP;
         GroupNone |= A == WDI_CIPHER_ALGO_NONE;
     }
     if (C->Optional.RsnaAkmCipherSuites_IsPresent && C->RsnaAkmCipherSuites.ElementCount) {
@@ -347,6 +351,7 @@ static unsigned AuthMask(const WDI_CONNECT_PARAMETERS_CONTAINER *C)
         Psk &= Allowed;
     }
     return (Psk && PairCcmp && GroupCcmp ? SWIFI_AUTH_PSK_CCMP : 0) |
+        (Psk && PairCcmp && GroupTkip ? SWIFI_AUTH_PSK_CCMP_TKIP : 0) |
         (Open && PairNone && GroupNone && !C->ConnectionSettings.ExcludeUnencrypted ? SWIFI_AUTH_OPEN : 0);
 }
 
@@ -367,14 +372,16 @@ enum {
 };
 
 static BOOLEAN MatchDesiredSsid(const WDI_CONNECT_PARAMETERS_CONTAINER *C, const WDI_BYTE_BLOB *Frame,
-    ULONG Mask, swifi_bss_profile *Profile)
+    ULONG Mask, swifi_bss_profile *Profile, PULONG Errors)
 {
     /* A suppressed SSID identifies a hidden target only when the host names one. */
     BOOLEAN Hidden = C->ConnectionSettings.HiddenNetwork && C->SSIDList.ElementCount == 1;
     for (ULONG I = 0; I < C->SSIDList.ElementCount; ++I) {
         const WDI_SSID *Ssid = &C->SSIDList.pElements[I];
-        if (swifi_match_bss(Frame->pElements, Frame->ElementCount, Ssid->pElements,
-            Ssid->ElementCount, Hidden, Mask, Profile)) return TRUE;
+        unsigned Error = swifi_match_bss_reason(Frame->pElements, Frame->ElementCount,
+            Ssid->pElements, Ssid->ElementCount, Hidden, Mask, Profile);
+        if (!Error) return TRUE;
+        *Errors |= Error;
     }
     return FALSE;
 }
@@ -385,6 +392,7 @@ static NTSTATUS Candidates(SWIFI_JOIN *J, const WDI_TASK_CONNECT_PARAMETERS *P,
     static const UCHAR Broadcast[6] = {255,255,255,255,255,255};
     const WDI_CONNECT_PARAMETERS_CONTAINER *C = &P->ConnectParameters;
     ULONG Mask = AuthMask(C), Blocked = J->DisallowedBands;
+    if (KeQueryInterruptTime() < J->MicBlockedUntil) Mask &= ~SWIFI_AUTH_PSK_CCMP_TKIP;
     Selection->Auth = Mask;
     Selection->Names = C->SSIDList.ElementCount;
     Selection->Offered = P->PreferredBSSEntryList.ElementCount;
@@ -443,16 +451,20 @@ static NTSTATUS Candidates(SWIFI_JOIN *J, const WDI_TASK_CONNECT_PARAMETERS *P,
         WDI_BYTE_BLOB Cached = {0};
         swifi_bss_profile Profile;
         BOOLEAN SawFrame = FALSE;
+        ULONG ProfileErrors = 0;
         const WDI_BYTE_BLOB *Frames[] = {&B->ProbeResponseFrame, &B->BeaconFrame};
         for (ULONG K = 0; K < RTL_NUMBER_OF(Frames); ++K) {
             const WDI_BYTE_BLOB *Frame = Frames[K];
             if (!Frame->ElementCount) continue;
             SawFrame = TRUE;
-            if (Frame->ElementCount < 12) continue; /* no management body */
-            if (Frame->ElementCount <= SwifiAssocBodyMax && MatchDesiredSsid(C, Frame, Mask, &Profile))
+            if (Frame->ElementCount < 12) { ProfileErrors |= SWIFI_BSS_FRAME; continue; }
+            if (Frame->ElementCount <= SwifiAssocBodyMax && MatchDesiredSsid(C, Frame, Mask, &Profile, &ProfileErrors)) {
                 Body = Frame;
-            /* A supplied security mismatch cannot select older cached security. */
-            break;
+                break;
+            }
+            /* The same host candidate can contain both frames. An unusable
+             * probe response must not hide a compatible supplied beacon.
+             * Neither frame can authorize an older cached security fallback. */
         }
         if (!SawFrame) {
             Cached.pElements = J->Frames.Req;
@@ -461,12 +473,16 @@ static NTSTATUS Candidates(SWIFI_JOIN *J, const WDI_TASK_CONNECT_PARAMETERS *P,
                     Cached.pElements, sizeof(J->Frames.Req));
                 if (!Cached.ElementCount) continue;
                 SawFrame = TRUE;
-                if (MatchDesiredSsid(C, &Cached, Mask, &Profile)) Body = &Cached;
+                if (MatchDesiredSsid(C, &Cached, Mask, &Profile, &ProfileErrors)) Body = &Cached;
                 break;
             }
         }
-        if (!Body) { Selection->Rejected |= SawFrame ? RejectProfile : RejectNoFrame; continue; }
-        if (B->Optional.PMKID_IsPresent && (B->PMKID.ElementCount != 16 || Profile.auth != SWIFI_AUTH_PSK_CCMP)) {
+        if (!Body) {
+            Selection->Rejected |= SawFrame ? RejectProfile : RejectNoFrame;
+            if (SawFrame) Selection->Rejected |= (ProfileErrors ? ProfileErrors : SWIFI_BSS_FRAME) << 16;
+            continue;
+        }
+        if (B->Optional.PMKID_IsPresent && (B->PMKID.ElementCount != 16 || Profile.auth == SWIFI_AUTH_OPEN)) {
             Selection->Rejected |= RejectPmkid; continue;
         }
         const WDI_BYTE_BLOB *Local = B->Optional.AssociationRequestVendorIE_IsPresent ? &B->AssociationRequestVendorIE : &Empty;
@@ -506,7 +522,7 @@ static VOID NextCandidate(SWIFI_JOIN *J)
         }
         J->Active = CONTAINING_RECORD(RemoveHeadList(&J->Pending), JOIN_CANDIDATE, Link);
         JOIN_CANDIDATE *C = J->Active;
-        SwifiDataBeginJoin(J->Owner, C->Peer, C->Profile.auth == SWIFI_AUTH_PSK_CCMP, C->ExcludeUnencrypted);
+        SwifiDataBeginJoin(J->Owner, C->Peer, C->Profile.auth != SWIFI_AUTH_OPEN, C->ExcludeUnencrypted);
         NTSTATUS Status = Vendors(J, TRUE);
         if (NT_SUCCESS(Status)) Status = SwifiJoinFirmware(J->Owner, J->Info, &C->Profile,
             C->Peer, C->Channel, C->HavePmkid ? C->Pmkid : NULL);
@@ -810,11 +826,12 @@ static NTSTATUS LeaveTask(SWIFI_JOIN *J, UINT16 Id, WDI_MESSAGE_HEADER *H, ULONG
 
 static NTSTATUS ChangeKeys(SWIFI_JOIN *J, UINT16 Id, WDI_MESSAGE_HEADER *H, ULONG Bytes)
 {
-    if (!J->Associated || J->Leaving || J->Active->Profile.auth != SWIFI_AUTH_PSK_CCMP)
+    if (!J->Associated || J->Leaving || J->Active->Profile.auth == SWIFI_AUTH_OPEN)
         return STATUS_INVALID_DEVICE_STATE;
     BOOLEAN Uncertain;
     BOOLEAN OldPair = J->Keys.Slot[4].Present;
-    NTSTATUS Status = SwifiKeysChange(&J->Keys, J->Owner, J->Active->Peer, &J->Tlv,
+    NTSTATUS Status = SwifiKeysChange(&J->Keys, J->Owner, J->Active->Peer,
+        swifi_group_cipher(J->Active->Profile.auth), &J->Tlv,
         H, Bytes, Id == WDI_SET_ADD_CIPHER_KEYS, &Uncertain);
     if (NT_SUCCESS(Status) && OldPair != J->Keys.Slot[4].Present) {
         UCHAR Address[6];
@@ -917,6 +934,38 @@ BOOLEAN SwifiJoinCommand(SWIFI_JOIN *J, WIFIREQUEST Request, UINT16 Id, WDI_MESS
     return TRUE;
 }
 
+static VOID GroupMicFailure(SWIFI_JOIN *J, const UCHAR *Event)
+{
+    if (!J->Associated || J->Leaving || J->Active->Profile.auth != SWIFI_AUTH_PSK_CCMP_TKIP ||
+        !(Event[27] & 4)) return; /* BRCMF_EVENT_MSG_GROUP; unicast uses CCMP. */
+    WDI_INDICATION_TKIP_MIC_FAILURE_PARAMETERS P = {0};
+    ULONG Count = 0;
+    for (ULONG I = 0; I < 4; ++I) {
+        if (!J->Keys.Slot[I].Present || J->Keys.Slot[I].Cipher != SWIFI_CIPHER_TKIP) continue;
+        P.FailureInfo.KeyIndex = J->Keys.Slot[I].Id;
+        ++Count;
+    }
+    if (!Count) return;
+    NTSTATUS Status = STATUS_NOT_SUPPORTED;
+    if (Count == 1 && !(Event[48] & 1) && memcmp(Event+48,"\0\0\0\0\0\0",6)) {
+        P.FailureInfo.DefaultKeyFailure = TRUE;
+        RtlCopyMemory(P.FailureInfo.PeerMacAddress.Address, Event+48, 6);
+        UINT8 *Generated = NULL;
+        ULONG Length = 0;
+        Status = (NTSTATUS)GenerateWdiIndicationTkipMicFailureFromIhv(&P,
+            sizeof(WDI_MESSAGE_HEADER), &J->Tlv, &Length, &Generated);
+        if (NT_SUCCESS(Status)) Status = Indicate(J, WDI_INDICATION_TKIP_MIC_FAILURE, Generated, Length);
+        if (Generated) FreeGenerated(Generated);
+    }
+    if (!NT_SUCCESS(Status)) {
+        /* Broadcom's MIC event has no key index (brcmfmac reports -1).
+         * During GTK overlap we cannot fabricate the WDI-required index.
+         * Leave and hold TKIP associations for the countermeasure interval. */
+        J->MicBlockedUntil = KeQueryInterruptTime() + 600000000ULL;
+        (VOID)BeginLeave(J, 14, STATUS_ACCESS_DENIED, FALSE);
+    }
+}
+
 BOOLEAN SwifiJoinEvent(SWIFI_JOIN *J, const swifi_event_completion *E)
 {
     const UCHAR *P = E->data;
@@ -925,9 +974,10 @@ BOOLEAN SwifiJoinEvent(SWIFI_JOIN *J, const swifi_event_completion *E)
         SwifiScanBe32(P+44) > E->length - 72u) return FALSE;
     ULONG Type = SwifiScanBe32(P+28), Status = SwifiScanBe32(P+32);
     BOOLEAN DownEvent = Type == 5 || Type == 6 || Type == 11 || Type == 12 || (Type == 16 && !(P[27] & 1));
-    if (Type != 0 && !DownEvent && Type != 19) return FALSE;
+    if (Type != 0 && !DownEvent && Type != 17 && Type != 19) return FALSE;
     WdfWaitLockAcquire(J->Lock, NULL);
     if (!J->Online || !J->Active || J->Poisoned) goto Done;
+    if (Type == 17) { GroupMicFailure(J, P); goto Done; }
     BOOLEAN Same = RtlEqualMemory(P+48, J->Active->Peer, 6);
     BOOLEAN Unknown = !memcmp(P+48,"\0\0\0\0\0\0",6);
     if (!Same && !Unknown) {
@@ -978,7 +1028,7 @@ BOOLEAN SwifiJoinEvent(SWIFI_JOIN *J, const swifi_event_completion *E)
     if (!NT_SUCCESS(Result)) { (VOID)BeginLeave(J, 3, Result, TRUE); goto Done; }
     J->Associated = TRUE;
     J->Deadline = 0;
-    BOOLEAN Secure = J->Active->Profile.auth == SWIFI_AUTH_PSK_CCMP;
+    BOOLEAN Secure = J->Active->Profile.auth != SWIFI_AUTH_OPEN;
     Result = Vendors(J, FALSE);
     if (NT_SUCCESS(Result)) Result = AssocResult(J, WDI_ASSOC_STATUS_SUCCESS, 0);
     if (!NT_SUCCESS(Result)) { Poison(J, Result); goto Done; }

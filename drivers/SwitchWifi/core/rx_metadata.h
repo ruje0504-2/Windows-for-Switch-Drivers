@@ -14,10 +14,11 @@ typedef struct swifi_rx_metadata {
 /* BCM v5 D2H optional metadata starts with four header bytes, followed by
  * WLFC type/length/value records. Unknown records convey no crypto proof. */
 int swifi_parse_rx_metadata(const uint8_t *bytes, size_t length, swifi_rx_metadata *result);
-/* A decapsulated EAPOL is known clear only before the first key transition
- * crossed by this posted buffer. A native header has its own validation. */
-int swifi_prekey_ethernet(uint32_t posted_epoch, uint32_t current_epoch,
-    int posted_with_key, int current_with_key);
+/* Check a completed, queued packet against the current key state. RXPOST
+ * buffers span associations and cannot establish a packet's crypto epoch.
+ * A native header has its own validation. */
+int swifi_prekey_ethernet(uint32_t received_epoch, uint32_t current_epoch,
+    int received_with_key, int current_with_key);
 int swifi_signal_quality(int rssi_dbm);
 
 /* Parse the common, documented v3/v4/v5 sta_info prefix. Speeds are kbps.

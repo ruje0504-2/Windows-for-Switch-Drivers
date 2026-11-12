@@ -197,10 +197,17 @@ static VOID RxComplete(void *Context, const swifi_packet_completion *Completion)
     }
     /* Native FromDS preserves its transmitter. An Ethernet completion has
      * only the authenticator SA; trust a distinct SA only on the active BSS. */
-    if ((!D->Associated || Slot->Epoch != D->Epoch) && !(Eapol && (Native || Direct))) {
+    if (!D->Associated && !(Eapol && (Native || Direct))) {
         ++D->RxDrops;
         return;
     }
+    /* RXPOST lends empty storage to firmware for the transport lifetime.
+     * It can be filled after a disconnect, a new association or a key change.
+     * Stamp the received packet here, not when its empty buffer was posted.
+     * AdvanceRx still rejects queued packets across association/key changes. */
+    Slot->Epoch = D->Epoch;
+    Slot->KeyEpoch = D->KeyEpoch;
+    Slot->KeyInFlight = D->Pairwise || D->Group || D->KeyTx.changing;
     ReadMetadata(D, Slot, Completion->metadata_length);
     Slot->Protected = FALSE;
     Slot->DerivedClear = D->Secure && Eapol && !Native;
@@ -225,7 +232,6 @@ static VOID RxComplete(void *Context, const swifi_packet_completion *Completion)
             Slot->AcceptedKeyEpoch = D->KeyEpoch;
         }
     }
-    Slot->Epoch = D->Epoch;
     RemoveEntryList(&Slot->Link);
     Slot->State = SwifiRxReady;
     if (Eapol) Observe(D, PathQueued);
@@ -276,7 +282,6 @@ NTSTATUS SwifiDataBind(SWIFI_DEVICE *Device)
     D->Hardware = H;
     InitializeListHead(&D->ReadyRx);
     InitializeListHead(&D->FreeRx);
-    D->FirstJoin = TRUE;
     D->PacketPath = 0;
     RtlZeroMemory(D->Tx, sizeof(D->Tx));
     RtlZeroMemory(D->Rx, sizeof(D->Rx));
@@ -346,11 +351,8 @@ static USHORT Service(SWIFI_STATION_DATA *D)
             if (R != SWIFI_RETRY) D->FlowFault = TRUE;
             break;
         }
-        Slot->Epoch = D->Epoch;
         RemoveEntryList(&Slot->Link);
         ++Posted;
-        Slot->KeyEpoch = D->KeyEpoch;
-        Slot->KeyInFlight = D->Pairwise || D->Group || D->KeyTx.changing;
         Slot->State = SwifiRxPosted;
     }
     if (Posted) Observe(D, PathPosted);
@@ -403,12 +405,6 @@ VOID SwifiDataBeginJoin(SWIFI_DEVICE *Device, const UCHAR Peer[6], BOOLEAN Secur
     KeAcquireSpinLock(&Device->Hw.ProtocolLock, &Irql);
     if (D->Enabled) {
         ++D->Epoch;
-        if (D->FirstJoin) {
-            /* Idle buffers from this D0 have never seen a prior association. */
-            for (USHORT I = 0; I < D->Core.rx_count; ++I)
-                if (D->Rx[I].State == SwifiRxPosted) D->Rx[I].Epoch = D->Epoch;
-            D->FirstJoin = FALSE;
-        }
         D->Joining = TRUE;
         D->SampleValid = FALSE;
         D->NextLinkCheck = 0;

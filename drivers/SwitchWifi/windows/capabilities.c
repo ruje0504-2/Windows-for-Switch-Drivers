@@ -12,7 +12,7 @@ struct SWIFI_RADIO_CAPS {
     SWIFI_FIRMWARE_INFO Identity;
     WIFI_DEVICE_CAPABILITIES Device;
     WIFI_STATION_CAPABILITIES Station;
-    DOT11_AUTH_CIPHER_PAIR Suites[2];
+    DOT11_AUTH_CIPHER_PAIR Suites[3];
     WIFI_BAND_CAPABILITIES Bands;
     WIFI_PHY_CAPABILITIES Phys;
     WIFI_BAND_INFO Band[MaxBands];
@@ -101,7 +101,10 @@ static NTSTATUS Build(SWIFI_RADIO_CAPS *Caps, const SWIFI_FIRMWARE_INFO *Info)
     Caps->Suites[0].CipherAlgoId = DOT11_CIPHER_ALGO_NONE;
     Caps->Suites[1].AuthAlgoId = DOT11_AUTH_ALGO_RSNA_PSK;
     Caps->Suites[1].CipherAlgoId = DOT11_CIPHER_ALGO_CCMP;
-    Caps->Station.NumSupportedUnicastAlgorithms = Caps->Station.NumSupportedMulticastDataAlgorithms = 2;
+    Caps->Suites[2].AuthAlgoId = DOT11_AUTH_ALGO_RSNA_PSK;
+    Caps->Suites[2].CipherAlgoId = DOT11_CIPHER_ALGO_TKIP;
+    Caps->Station.NumSupportedUnicastAlgorithms = 2;
+    Caps->Station.NumSupportedMulticastDataAlgorithms = 3;
     Caps->Station.UnicastAlgorithmsList = Caps->Station.MulticastDataAlgorithmsList = Caps->Suites;
     Caps->Bands.Size = sizeof(Caps->Bands);
     Caps->Bands.BandInfoList = Caps->Band;

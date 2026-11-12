@@ -2,7 +2,41 @@
 
 Windows ARM64 driver for the BCM4356A3 PCIe radio on Switch Lite (HDH-001).
 
-**Version 0.5.5** automatically reconnected to a saved WPA2-Personal network, obtained an IPv4 lease and default gateway via DHCP, and reached the Internet on Windows 11 23H2. Sustained throughput and group rekey still need measurement. Supply the board firmware and calibration separately. [Runtime diagnostics](#on-device-status)
+**Version 0.5.6** adds WPA2-Personal with CCMP unicast and TKIP multicast for
+mixed WPA/WPA2 access points. Candidate selection, generated association RSN,
+firmware `wsec`, WDI association results, multicast capabilities and 32-byte GTK
+installation/removal now agree on the selected group cipher. Windows supplies
+TKIP MIC material in RX/TX order, which is already the Broadcom station order;
+do not repeat brcmfmac's Linux-specific MIC-half swap. Unicast remains CCMP.
+Candidate selection also checks a supplied beacon when a supplied probe response
+cannot match, without falling back to cached security after an explicit mismatch.
+
+Firmware-owned empty RXPOST buffers now acquire association/key state when a
+packet completes, instead of retaining the state from when storage was posted.
+The actual receive/join/indication functions pass a host regression covering
+retained buffers, repeated reconnects, bridged EAPOL and queued-key boundaries.
+Mixed-group RSN/GTK host controls and the ARM64 driver build pass. Hardware
+acceptance, including Windows package installation, is pending.
+
+Version 0.5.5 connected to a saved WPA2-Personal network after boot, obtained an
+IPv4 lease and default gateway via DHCP, and reached the Internet on Windows 11
+23H2. That result did not establish repeated disconnect/reconnect support.
+The `qmjd1908` device log rejected a candidate before firmware association;
+a Mac scan reported channel 11 and WPA/WPA2 mixed support. The AP's raw RSN IE
+was not available, so these facts do not prove its exact group cipher or that
+0.5.6 fixes that physical connection. 0.5.6 also adds specific rejection bits
+in the upper 16 bits of `select`'s final field
+(`SWIFI_BSS_*` in `core/station_security.h`), while retaining the existing low
+bits and the host's permitted cipher policy. It does not log passwords or management frames.
+Sustained throughput and group rekey still need measurement. Supply the board
+firmware and calibration separately. [Runtime diagnostics](#on-device-status)
+
+TKIP MIC failures reach Windows with the installed GTK index. Broadcom does not
+identify a key index in that event; if two GTKs overlap or an indication cannot
+be delivered, the driver disconnects and holds TKIP associations for 60 seconds
+instead of inventing a WDI key index. CCMP-only associations remain available.
+Wire formats follow [Switchroot brcmfmac](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/linux-5.1.2/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c)
+and [Windows TKIP key material ordering](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/windot11/ns-windot11-dot11_key_algo_tkip_mic).
 
 ## Implementation and earlier bring-up
 
@@ -59,6 +93,10 @@ Skipping networking during OOBE only affects first setup.
 - Packets stay owned until a matching completion; ring-full retries leave
   ownership with the caller. A generation-tagged request ID rejects duplicate
   or late completions without releasing a newer packet.
+- Empty RXPOST storage belongs to the firmware transport, not an association.
+  Completed packets carry the current association/key epoch; queued packets
+  are still rejected if that epoch changes before delivery to the OS. This
+  follows Switchroot's [brcmfmac RX completion path](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/linux-5.1.2/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c).
 - The transport strips the firmware completion-ring prefix before dispatch.
   RX packet offset uses the per-message value when nonzero, otherwise the
   firmware's shared RX offset. Bounds are checked before handing data upward.

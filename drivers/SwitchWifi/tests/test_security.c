@@ -53,9 +53,43 @@ static void test_tx_across_key_write(void)
     assert(!swifi_eapol_admit(&tx, SWIFI_TX_EAPOL));
 }
 
+static void test_mixed_group_cipher(void)
+{
+    /* WPA2 PSK, CCMP unicast, TKIP multicast; a WPA1 vendor IE can coexist.
+     * This valid mixed-mode BSS was rejected before reaching firmware join. */
+    const uint8_t beacon[] = {
+        0,0,0,0,0,0,0,0,100,0,0x11,0, 0,3,'a','p','1',
+        48,20,1,0,0,15,172,2,1,0,0,15,172,4,1,0,0,15,172,2,0,0,
+        221,6,0,80,242,1,1,0
+    };
+    swifi_bss_profile profile;
+    const unsigned both = SWIFI_AUTH_PSK_CCMP | SWIFI_AUTH_PSK_CCMP_TKIP;
+    assert(swifi_match_bss(beacon,sizeof(beacon),(const uint8_t*)"ap1",3,0,both,&profile));
+    assert(profile.auth==SWIFI_AUTH_PSK_CCMP_TKIP && swifi_group_cipher(profile.auth)==SWIFI_CIPHER_TKIP);
+    /* A CCMP-only host policy still forbids TKIP; this is negotiated support. */
+    assert(!swifi_match_bss(beacon,sizeof(beacon),(const uint8_t*)"ap1",3,0,SWIFI_AUTH_PSK_CCMP,&profile));
+    uint8_t rsn[SWIFI_RSN_MAX], pmkid[16]={0xa5};
+    assert(swifi_rsn_request(rsn,profile.auth,pmkid)==40);
+    assert(rsn[7]==2 && rsn[13]==4 && rsn[19]==2);
+    assert(swifi_assoc_ies_match(rsn,40,&profile,pmkid));
+    rsn[7]=4; assert(!swifi_assoc_ies_match(rsn,40,&profile,pmkid)); rsn[7]=2;
+    rsn[13]=2; assert(!swifi_assoc_ies_match(rsn,40,&profile,pmkid)); rsn[13]=4;
+    rsn[20]=0x40; assert(!swifi_assoc_ies_match(rsn,40,&profile,pmkid));
+    uint8_t key[32], pn[6]={1,2,3,4,5,6}, wire[SWIFI_KEY_LEN], peer[6]={2,1,2,3,4,5};
+    for (unsigned i=0;i<32;++i) key[i]=(uint8_t)(i+1);
+    assert(swifi_cipher_key(wire,1,NULL,SWIFI_CIPHER_TKIP,key,32,pn));
+    assert(wire[0]==1 && wire[4]==32 && wire[112]==2 && wire[116]==2 && wire[132]==1);
+    assert(!memcmp(wire+8,key,16) && !memcmp(wire+24,key+16,8) && !memcmp(wire+32,key+24,8));
+    assert(!memcmp(wire+140,pn+2,4) && !memcmp(wire+144,pn,2));
+    assert(!swifi_cipher_key(wire,1,peer,SWIFI_CIPHER_TKIP,key,32,pn));
+    assert(!swifi_cipher_key(wire,1,NULL,SWIFI_CIPHER_TKIP,key,16,pn));
+    assert(swifi_cipher_key(wire,1,NULL,SWIFI_CIPHER_TKIP,NULL,0,NULL) && wire[4]==0 && wire[112]==0);
+}
+
 int main(void)
 {
     test_tx_across_key_write();
+    test_mixed_group_cipher();
     const uint8_t ssid[] = {'t',0,'s'}, peer[] = {2,4,6,8,10,12};
     uint8_t beacon[96] = {0}, rsn[SWIFI_RSN_MAX], pmkid[16] = {0xfe}, wire[SWIFI_KEY_LEN];
     swifi_bss_profile profile;
@@ -80,23 +114,23 @@ int main(void)
     assert(join[44]==0x40 && join[45]==1 && join[48]==0x90 && join[49]==1);
     assert(join[55]==255 && !memcmp(join+56,peer,6) && join[64]==1 && join[68]==0x24 && join[69]==0xd0);
     assert(!swifi_join_request(join,&profile,(const uint8_t*)"\xff\xff\xff\xff\xff\xff",0xd024));
-    assert(swifi_rsn_request(rsn,pmkid)==40 && rsn[1]==38 && !memcmp(rsn+24,pmkid,16));
+    assert(swifi_rsn_request(rsn,profile.auth,pmkid)==40 && rsn[1]==38 && !memcmp(rsn+24,pmkid,16));
     assert(swifi_assoc_ies_match(rsn,40,&profile,pmkid));
     rsn[24]^=1;assert(!swifi_assoc_ies_match(rsn,40,&profile,pmkid));rsn[24]^=1;
     rsn[19]=8; assert(!swifi_assoc_ies_match(rsn,40,&profile,pmkid));
-    assert(swifi_rsn_request(rsn,NULL)==22 && swifi_assoc_ies_match(rsn,22,&profile,NULL));
+    assert(swifi_rsn_request(rsn,profile.auth,NULL)==22 && swifi_assoc_ies_match(rsn,22,&profile,NULL));
     assert(!swifi_assoc_ies_match(rsn,22,&profile,pmkid));
     profile.auth=SWIFI_AUTH_OPEN;
     assert(!swifi_assoc_ies_match(rsn,22,&profile,NULL));
     assert(swifi_assoc_ies_match(NULL,0,&profile,NULL));
     uint8_t key[16]={0}, pn[6]={1,2,3,4,5,6};
     for (unsigned i=0;i<16;++i) key[i]=(uint8_t)(i+32);
-    assert(swifi_ccmp_key(wire,0,peer,key,pn));
+    assert(swifi_cipher_key(wire,0,peer,SWIFI_CIPHER_CCMP,key,16,pn));
     assert(wire[4]==16 && !memcmp(wire+8,key,16) && wire[112]==4 && wire[116]==0 && wire[132]==1);
     assert(!memcmp(wire+140,pn+2,4) && !memcmp(wire+144,pn,2) && !memcmp(wire+156,peer,6));
-    assert(swifi_ccmp_key(wire,2,NULL,key,pn) && wire[0]==2 && wire[116]==2);
-    assert(swifi_ccmp_key(wire,0,peer,NULL,NULL) && wire[4]==0 && wire[112]==0 && !memcmp(wire+156,peer,6));
-    assert(!swifi_ccmp_key(wire,4,NULL,key,pn));
+    assert(swifi_cipher_key(wire,2,NULL,SWIFI_CIPHER_CCMP,key,16,pn) && wire[0]==2 && wire[116]==2);
+    assert(swifi_cipher_key(wire,0,peer,SWIFI_CIPHER_CCMP,NULL,0,NULL) && wire[4]==0 && wire[112]==0 && !memcmp(wire+156,peer,6));
+    assert(!swifi_cipher_key(wire,4,NULL,SWIFI_CIPHER_CCMP,key,16,pn));
     assert(swifi_keep_key_on_retry(1,1,pn,pn)==1);
     uint8_t requested[6]={0,0,0,0,0,7};
     assert(swifi_keep_key_on_retry(1,1,requested,pn)==0);

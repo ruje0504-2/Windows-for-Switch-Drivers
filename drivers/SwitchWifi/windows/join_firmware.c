@@ -7,7 +7,8 @@ NTSTATUS SwifiJoinFirmware(SWIFI_DEVICE *D, const SWIFI_FIRMWARE_INFO *Info,
 {
     SWIFI_WIN_CONTROL *C = &D->Hw.Control;
     UCHAR Join[SWIFI_JOIN_LEN], Rsn[SWIFI_RSN_MAX], Events[18] = {0};
-    const BOOLEAN Secure = Profile->auth == SWIFI_AUTH_PSK_CCMP;
+    const BOOLEAN Secure = Profile->auth != SWIFI_AUTH_OPEN;
+    const ULONG Wsec = Secure ? SWIFI_CIPHER_CCMP | swifi_group_cipher(Profile->auth) : 0;
     USHORT Returned;
     ULONG One = 1;
     if (!swifi_join_request(Join, Profile, Peer, SwifiScanChanspec(Info->IoctlVersion, Channel)))
@@ -20,7 +21,7 @@ NTSTATUS SwifiJoinFirmware(SWIFI_DEVICE *D, const SWIFI_FIRMWARE_INFO *Info,
     Status = SwifiFirmwareIovarGet(C, 0, "event_msgs", Events, sizeof(Events), &Returned, NULL);
     if (!NT_SUCCESS(Status)) return Status;
     if (Returned < 3) return STATUS_DEVICE_PROTOCOL_ERROR;
-    static const UCHAR Required[] = {0, 5, 6, 11, 12, 16, 19};
+    static const UCHAR Required[] = {0, 5, 6, 11, 12, 16, 17, 19};
     for (ULONG I = 0; I < RTL_NUMBER_OF(Required); ++I) Events[Required[I]/8] |= 1u << (Required[I]%8);
     Status = SwifiFirmwareIovarSet(C, 0, "event_msgs", Events, Returned, NULL);
     if (NT_SUCCESS(Status)) Status = SwifiFirmwareSetU32(C, 0, "roam_off", 1);
@@ -30,7 +31,7 @@ NTSTATUS SwifiJoinFirmware(SWIFI_DEVICE *D, const SWIFI_FIRMWARE_INFO *Info,
         if (Status == STATUS_NOT_SUPPORTED || Status == STATUS_NOT_FOUND) Status = STATUS_SUCCESS;
     }
     if (NT_SUCCESS(Status)) Status = SwifiFirmwareSetU32(C, 0, "auth", 0);
-    if (NT_SUCCESS(Status)) Status = SwifiFirmwareSetU32(C, 0, "wsec", Secure ? 4 : 0);
+    if (NT_SUCCESS(Status)) Status = SwifiFirmwareSetU32(C, 0, "wsec", Wsec);
     if (NT_SUCCESS(Status)) Status = SwifiFirmwareSetU32(C, 0, "wpa_auth", Secure ? 0x80 : 0);
     if (NT_SUCCESS(Status)) {
         Status = SwifiFirmwareSetU32(C, 0, "wsec_restrict", Secure);
@@ -44,7 +45,7 @@ NTSTATUS SwifiJoinFirmware(SWIFI_DEVICE *D, const SWIFI_FIRMWARE_INFO *Info,
         if (!Secure && (Status == STATUS_NOT_SUPPORTED || Status == STATUS_NOT_FOUND)) Status = STATUS_SUCCESS;
     }
     if (NT_SUCCESS(Status)) {
-        USHORT Length = Secure ? (USHORT)swifi_rsn_request(Rsn, Pmkid) : 0;
+        USHORT Length = Secure ? (USHORT)swifi_rsn_request(Rsn, Profile->auth, Pmkid) : 0;
         Status = SwifiFirmwareIovarSet(C, 0, "wpaie", Rsn, Length, NULL);
     }
     if (NT_SUCCESS(Status)) {
@@ -111,10 +112,11 @@ NTSTATUS SwifiJoinReadFrames(SWIFI_WIN_CONTROL *C, const UCHAR Peer[6],
     return STATUS_SUCCESS;
 }
 
-NTSTATUS SwifiJoinKey(SWIFI_WIN_CONTROL *C, UCHAR Id, const UCHAR *Peer, const UCHAR *Key, const UCHAR *Pn)
+NTSTATUS SwifiJoinKey(SWIFI_WIN_CONTROL *C, UCHAR Id, const UCHAR *Peer,
+    swifi_cipher Cipher, const UCHAR *Key, SIZE_T KeyLength, const UCHAR *Pn)
 {
     UCHAR Wire[SWIFI_KEY_LEN];
-    if (!swifi_ccmp_key(Wire, Id, Peer, Key, Pn)) return STATUS_INVALID_PARAMETER;
+    if (!swifi_cipher_key(Wire, Id, Peer, Cipher, Key, KeyLength, Pn)) return STATUS_INVALID_PARAMETER;
     NTSTATUS Status = SwifiFirmwareIovarSet(C, 0, "wsec_key", Wire, sizeof(Wire), NULL);
     RtlSecureZeroMemory(Wire, sizeof(Wire));
     return Status;

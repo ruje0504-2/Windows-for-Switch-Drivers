@@ -17,5 +17,5 @@ NTSTATUS SwifiLeaveFirmware(SWIFI_WIN_CONTROL *Control, const UCHAR Peer[6], USH
 NTSTATUS SwifiJoinReadFrames(SWIFI_WIN_CONTROL *Control, const UCHAR Peer[6],
     const swifi_bss_profile *Profile, const UCHAR *Pmkid, SWIFI_ASSOC_FRAMES *Frames);
 NTSTATUS SwifiJoinKey(SWIFI_WIN_CONTROL *Control, UCHAR Id, const UCHAR *Peer,
-    const UCHAR *Key, const UCHAR *Pn);
+    swifi_cipher Cipher, const UCHAR *Key, SIZE_T KeyLength, const UCHAR *Pn);
 #endif

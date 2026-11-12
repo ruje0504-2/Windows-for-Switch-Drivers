@@ -33,10 +33,10 @@ int swifi_parse_rx_metadata(const uint8_t *bytes, size_t length, swifi_rx_metada
     return 1;
 }
 
-int swifi_prekey_ethernet(uint32_t posted_epoch, uint32_t current_epoch,
-    int posted_with_key, int current_with_key)
+int swifi_prekey_ethernet(uint32_t received_epoch, uint32_t current_epoch,
+    int received_with_key, int current_with_key)
 {
-    return posted_epoch == current_epoch && !posted_with_key && !current_with_key;
+    return received_epoch == current_epoch && !received_with_key && !current_with_key;
 }
 
 int swifi_signal_quality(int dbm)
