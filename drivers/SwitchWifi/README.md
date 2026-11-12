@@ -2,6 +2,18 @@
 
 Windows ARM64 driver for the BCM4356A3 PCIe radio on Switch Lite (HDH-001).
 
+**2026-11-12 physical result:** the owner reports that Wi-Fi is substantially
+recovered with **0.5.6.0**. A subsequent SSH session independently confirmed
+that Windows installed `oem87.inf` on `ACPI\SWOA0D01\0` and that the selected
+`switchwifi.sys` has SHA-256
+`39eeeca3362014e34c45208097d9b3ba96ff9b48da1a20da818e2c938babaa55`, matching
+the delivered driver. This establishes package installation and restored
+network/SSH access; it is not sustained-throughput, reconnect-cycle or group-rekey
+acceptance. The owner's qualification is retained: basic recovery, not a claim
+that every Wi-Fi issue is resolved.
+Windows reports the current link as 802.11n, WPA2-Personal/CCMP, 2.4 GHz channel
+11. This observation does not establish 5 GHz behavior or the AP's group cipher.
+
 **Version 0.5.6** adds WPA2-Personal with CCMP unicast and TKIP multicast for
 mixed WPA/WPA2 access points. Candidate selection, generated association RSN,
 firmware `wsec`, WDI association results, multicast capabilities and 32-byte GTK
@@ -15,16 +27,16 @@ Firmware-owned empty RXPOST buffers now acquire association/key state when a
 packet completes, instead of retaining the state from when storage was posted.
 The actual receive/join/indication functions pass a host regression covering
 retained buffers, repeated reconnects, bridged EAPOL and queued-key boundaries.
-Mixed-group RSN/GTK host controls and the ARM64 driver build pass. Hardware
-acceptance, including Windows package installation, is pending.
+Mixed-group RSN/GTK host controls and the ARM64 driver build pass. The physical
+installation result above is separate from those local checks.
 
 Version 0.5.5 connected to a saved WPA2-Personal network after boot, obtained an
 IPv4 lease and default gateway via DHCP, and reached the Internet on Windows 11
 23H2. That result did not establish repeated disconnect/reconnect support.
 The `qmjd1908` device log rejected a candidate before firmware association;
 a Mac scan reported channel 11 and WPA/WPA2 mixed support. The AP's raw RSN IE
-was not available, so these facts do not prove its exact group cipher or that
-0.5.6 fixes that physical connection. 0.5.6 also adds specific rejection bits
+was not available, so those earlier facts do not prove which individual change
+restored the owner's connection. 0.5.6 also adds specific rejection bits
 in the upper 16 bits of `select`'s final field
 (`SWIFI_BSS_*` in `core/station_security.h`), while retaining the existing low
 bits and the host's permitted cipher policy. It does not log passwords or management frames.

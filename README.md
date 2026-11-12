@@ -7,7 +7,7 @@ Drivers for the **HDH-001 (Tegra T214)** port of Windows 11 ARM64. They use the 
 | Driver | Result on Switch Lite |
 | --- | --- |
 | `nvtsdhc` 0.5.0.3 — SDR104 / DDR200 | The owner confirmed desktop boot with FAT32 visible. Automatic DDR200 capability detection, eight-tap-minimum tuning and checked SDR104 recovery are implemented. Version 0.5.0.3 restores interrupt masks after fallback reset. Active DDR200 mode, physical fallback and throughput still need runtime evidence. [Storage details](drivers/Tegra210Sdhc/README.md#t214-ddr200-candidate-0501) |
-| `switchwifi` 0.5.5 | Automatically reconnected to a saved WPA2-Personal network. Windows obtained a DHCP lease and default gateway, and the owner confirmed Internet access. |
+| `switchwifi` 0.5.6 | Owner reports basic Wi-Fi recovery on 2026-11-12. SSH confirms the installed version and exact driver hash; Windows reports WPA2-Personal/CCMP on 2.4 GHz channel 11. Adds mixed-group cipher support and fixes reconnect RX-buffer lifetime. Sustained transfer, repeated reconnects and group rekey remain unverified. [Details](drivers/SwitchWifi/README.md) |
 | `switchbt` 1.0.0.19 | The owner confirmed Bluetooth working after the combined SD 0.5.0.3 update. The driver retains strict firmware checks, bounded reset recovery and UART-D host preparation. Repeated startup and sleep/wake remain separate tests. |
 | GPIO, I²C3 and FTM4 touch | The shared controllers and Lite touch driver handle taps in Windows Setup. |
 | `switchsio` (analog sticks and gamepad) | Windows detected the HID gamepad and mouse and the driver received controller input. Both sticks are exposed to generic HID games. In-game use awaits testing. |
