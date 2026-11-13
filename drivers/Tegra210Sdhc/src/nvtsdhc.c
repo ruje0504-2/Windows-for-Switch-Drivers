@@ -454,7 +454,7 @@ NvDiagSetValue(
 static WORK_QUEUE_ITEM NvDiagSaveItem;
 static volatile LONG NvDiagSaveQueued;
 static volatile LONG64 NvDiagNextPeriodicSave;
-static struct { PCWSTR Name; ULONG Value; } NvDiagSnapshot[64];
+static struct { PCWSTR Name; ULONG Value; } NvDiagSnapshot[80];
 static ULONG NvDiagSnapshotCount;
 
 static VOID NvDiagCapture(PCWSTR Name, ULONG Value)
@@ -535,6 +535,22 @@ NvDiagSaveClock(
     NvDiagCapture( L"Ddr200TuningSamples", SdhcExtension->T214DdrTuningSamples);
     NvDiagCapture( L"Ddr200TuningTimeouts", SdhcExtension->T214DdrTuningTimeouts);
     NvDiagCapture( L"Ddr200TuningControl2", SdhcExtension->T214DdrTuningControl2);
+    NvDiagCapture( L"Ddr200PassMap0", SdhcExtension->T214DdrPassMap[0]);
+    NvDiagCapture( L"Ddr200PassMap1", SdhcExtension->T214DdrPassMap[1]);
+    NvDiagCapture( L"Ddr200PassMap2", SdhcExtension->T214DdrPassMap[2]);
+    NvDiagCapture( L"Ddr200PassMap3", SdhcExtension->T214DdrPassMap[3]);
+    NvDiagCapture( L"Ddr200ReadyMap0", SdhcExtension->T214DdrReadyMap[0]);
+    NvDiagCapture( L"Ddr200ReadyMap1", SdhcExtension->T214DdrReadyMap[1]);
+    NvDiagCapture( L"Ddr200ReadyMap2", SdhcExtension->T214DdrReadyMap[2]);
+    NvDiagCapture( L"Ddr200ReadyMap3", SdhcExtension->T214DdrReadyMap[3]);
+    NvDiagCapture( L"Ddr200FirstTimeoutTap", SdhcExtension->T214DdrFirstTimeoutTap);
+    NvDiagCapture( L"Ddr200TuningErrors", SdhcExtension->T214DdrTuningErrors);
+    NvDiagCapture( L"Ddr200TuningControl0", SdhcExtension->T214DdrTuningControl0);
+    NvDiagCapture( L"Ddr200TuningControl1", SdhcExtension->T214DdrTuningControl1);
+    NvDiagCapture( L"Ddr200SetupControl2", SdhcExtension->T214DdrSetupControl2);
+    NvDiagCapture( L"Ddr200TuningClock", SdhcExtension->T214DdrTuningClock);
+    NvDiagCapture( L"Ddr200TuningSource", SdhcExtension->T214DdrTuningSource);
+    NvDiagCapture( L"Ddr200TuningVendorClock", SdhcExtension->T214DdrTuningVendorClock);
     NvDiagCapture( L"Ddr200Active", SdhcExtension->T214DdrActive);
     NvDiagCapture( L"Ddr200Status", SdhcExtension->T214DdrStatus);
     NvDiagCapture( L"Ddr200RecoveryStatus", SdhcExtension->T214DdrRecoveryStatus);

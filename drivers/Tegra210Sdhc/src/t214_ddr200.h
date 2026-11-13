@@ -148,6 +148,11 @@ static NTSTATUS T214DdrManualTuning(PSDHC_EXTENSION s, PULONG Selected,
                                    PULONG Window)
 {
     s->T214DdrTuningSamples = s->T214DdrTuningTimeouts = s->T214DdrTuningControl2 = 0;
+    for (ULONG i = 0; i < 4; ++i) s->T214DdrPassMap[i] = s->T214DdrReadyMap[i] = 0;
+    s->T214DdrFirstTimeoutTap = MAXULONG;
+    s->T214DdrTuningErrors = 0;
+    s->T214DdrTuningControl0 = s->T214DdrTuningControl1 = s->T214DdrSetupControl2 = 0;
+    s->T214DdrTuningClock = s->T214DdrTuningSource = s->T214DdrTuningVendorClock = 0;
     if (!s->T214Voltage18 ||
         (SdhcReadRegisterUshort(s, SDHC_HOST_CONTROL2) & 7) != 4)
         return STATUS_INVALID_DEVICE_STATE;
@@ -168,6 +173,11 @@ static NTSTATUS T214DdrManualTuning(PSDHC_EXTENSION s, PULONG Selected,
     hc = SdhcReadRegisterUshort(s, SDHC_HOST_CONTROL2);
     SdhcWriteRegisterUshort(s, SDHC_HOST_CONTROL2,
                            (hc & ~SDHC_HC2_SELECT_SAMPLING_CLOCK) | SDHC_HC2_EXECUTE_TUNING);
+    s->T214DdrTuningControl0 = T214Read(b, 0x1c0);
+    s->T214DdrTuningControl1 = T214Read(b, 0x1c4);
+    s->T214DdrSetupControl2 = SdhcReadRegisterUshort(s, SDHC_HOST_CONTROL2);
+    s->T214DdrTuningClock = clock;
+    s->T214DdrTuningSource = T214Read(s->T214Car, 0x150);
     for (ULONG tap = 0; tap < T214_DDR200_TAPS; ++tap) {
         if (!T214WaitClear(b, SDHC_PRESENT_STATE, 3, 10000)) goto done;
         T214Write(b, 0x30, 0xffffffffu);
@@ -179,25 +189,35 @@ static NTSTATUS T214DdrManualTuning(PSDHC_EXTENSION s, PULONG Selected,
         SdhcWriteRegisterUlong(s, SDHC_ARGUMENT, 0);
         SdhcWriteRegisterUshort(s, SDHC_COMMAND, (19u << 8) | 0x3a);
         s->T214DdrTuningSamples = tap + 1;
+        /* Commit CMD19 before timing the Tegra reset workaround, as in
+         * Hekate's _sdmmc_commit_changes and Switchroot's T210 write quirk. */
+        (VOID)SdhcReadRegisterUshort(s, SDHC_CLOCK_CONTROL);
         KeStallExecutionProcessor(1);
         if (!T214DdrResetLines(s)) goto done;
         SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, clock | SDHC_CC_CLOCK_ENABLE);
+        (VOID)SdhcReadRegisterUshort(s, SDHC_CLOCK_CONTROL);
         BOOLEAN ready = FALSE;
+        ULONG events = 0;
         for (ULONG wait = 0; wait < 5000; wait += 5) {
-            if (SdhcReadRegisterUshort(s, SDHC_INTERRUPT_STATUS) & SDHC_IS_BUFFER_READ_READY) {
+            events = T214Read(b, SDHC_INTERRUPT_STATUS);
+            if (events & SDHC_IS_BUFFER_READ_READY) {
                 ready = TRUE;
                 break;
             }
             KeStallExecutionProcessor(5);
         }
+        s->T214DdrTuningErrors |= events >> 16;
         SdhcWriteRegisterUshort(s, SDHC_INTERRUPT_STATUS, SDHC_IS_BUFFER_READ_READY);
+        (VOID)SdhcReadRegisterUshort(s, SDHC_CLOCK_CONTROL);
         KeStallExecutionProcessor(1);
         hc = SdhcReadRegisterUshort(s, SDHC_HOST_CONTROL2);
         s->T214DdrTuningControl2 = hc;
+        if (ready) s->T214DdrReadyMap[tap / 32] |= 1u << (tap % 32);
         if (ready && (hc & SDHC_HC2_SELECT_SAMPLING_CLOCK))
             results[tap / 32] |= 1u << (tap % 32);
         tested = tap + 1;
         if (!ready) {
+            if (s->T214DdrFirstTimeoutTap == MAXULONG) s->T214DdrFirstTimeoutTap = tap;
             s->T214DdrTuningTimeouts = timeouts + 1;
             if (++timeouts >= T214_DDR200_TAPS / 32 || !T214DdrResetLines(s)) goto done;
         }
@@ -214,6 +234,8 @@ static NTSTATUS T214DdrManualTuning(PSDHC_EXTENSION s, PULONG Selected,
         st = STATUS_SUCCESS;
     }
 done:
+    for (ULONG i = 0; i < 4; ++i) s->T214DdrPassMap[i] = results[i];
+    s->T214DdrTuningVendorClock = T214Read(b, 0x100);
     hc = SdhcReadRegisterUshort(s, SDHC_HOST_CONTROL2) & ~SDHC_HC2_EXECUTE_TUNING;
     if (NT_SUCCESS(st)) hc |= SDHC_HC2_SELECT_SAMPLING_CLOCK;
     else hc &= ~SDHC_HC2_SELECT_SAMPLING_CLOCK;

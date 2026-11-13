@@ -10,7 +10,8 @@ diag = source[source.index('typedef struct _NV_DIAG {'):source.index('} NV_DIAG;
 start = source.index('#if NV_DIAG_CLOCK\n/* Snapshot only')
 code = source[start:source.index('\n#if NV_DIAG_REG\n\nstatic VOID\nNvDiagThread', start)]
 fields = sorted(set(re.findall(r'SdhcExtension->(\w+)', code)) -
-                {'Capabilities', 'T214Bounce', 'T214Scr', 'T214SwitchStatus'})
+                {'Capabilities', 'T214Bounce', 'T214Scr', 'T214SwitchStatus',
+                 'T214DdrPassMap', 'T214DdrReadyMap'})
 prefix = r'''
 #include <assert.h>
 #include <stdint.h>
@@ -39,7 +40,7 @@ typedef struct { void (*f)(void*); void *context; } WORK_QUEUE_ITEM;
 #define NT_SUCCESS(s) ((s)>=0)
 static int in_callback,queued,writes,create_failure;
 static uint64_t now;
-static ULONG last_commands,last_adma,last_saves;
+static ULONG last_commands,last_adma,last_saves,last_pass_map,last_ready_map;
 static WORK_QUEUE_ITEM *work;
 static LONG InterlockedExchange(volatile LONG *p,LONG v){LONG old=*p;*p=v;return old;}
 static LONG InterlockedCompareExchange(volatile LONG *p,LONG v,LONG cmp){LONG old=*p;if(old==cmp)*p=v;return old;}
@@ -56,6 +57,8 @@ static void NvDiagSetValue(HANDLE key,PCWSTR name,ULONG value){
  if(!wcscmp(name,L"Commands"))last_commands=value;
  if(!wcscmp(name,L"AdmaBlocks"))last_adma=value;
  if(!wcscmp(name,L"Saves"))last_saves=value;
+ if(!wcscmp(name,L"Ddr200PassMap3"))last_pass_map=value;
+ if(!wcscmp(name,L"Ddr200ReadyMap3"))last_ready_map=value;
 }
 static void ZwClose(HANDLE key){assert(key && !in_callback);}
 static void ExInitializeWorkItem(WORK_QUEUE_ITEM*w,void(*f)(void*),void*c){assert(!queued);w->f=f;w->context=c;}
@@ -66,18 +69,21 @@ prefix += (Path(__file__).resolve().parents[1] / 'src/t214_ddr200_policy.h').rea
 prefix += diag + '\nstatic NV_DIAG NvDiag;\n'
 prefix += 'typedef struct { struct { ULONG BaseClockFrequencyKhz; } Capabilities; void *T214Bounce;\n'
 prefix += 'UCHAR T214Scr[8],T214SwitchStatus[64];\n'
+prefix += 'ULONG T214DdrPassMap[4],T214DdrReadyMap[4];\n'
 prefix += '\n'.join('ULONG ' + name + ';' for name in fields)
 prefix += '\n} SDHC_EXTENSION,*PSDHC_EXTENSION;\n'
 tests = r'''
 int main(void){
  SDHC_EXTENSION slot={0};
  NvDiag.RegistryPath[0]=L'x';NvDiag.Commands=123;slot.T214DmaBlocks=456;
+ slot.T214DdrPassMap[3]=0x55555555;slot.T214DdrReadyMap[3]=0x7fffffff;
  in_callback=1;NvDiagSaveClock(&slot);assert(queued && writes==0);
  for(int i=0;i<100000;i++)NvDiagSaveClock(&slot);
  assert(queued && writes==0);in_callback=0;
  /* No deferred access to the slot extension or live counters. */
  memset(&slot,0,sizeof(slot));NvDiag.Commands=999;
  run_worker();assert(last_commands==123 && last_adma==456 && last_saves==1);
+ assert(last_pass_map==0x55555555 && last_ready_map==0x7fffffff);
  int initial_writes=writes;
  for(int i=0;i<100000;i++){now=299999999;in_callback=1;NvDiagSavePeriodic(&slot);}
  assert(!queued && writes==initial_writes);

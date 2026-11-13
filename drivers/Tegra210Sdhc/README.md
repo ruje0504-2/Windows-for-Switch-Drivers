@@ -307,6 +307,35 @@ normal boot/read/write check, successful dump-stack initialization and a
 retrieved dump that a debugger can open. Record that package's version and
 hash separately; compilation and Code 0 do not establish successful capture.
 
+### DDR200 sample trace (0.5.1.2)
+
+The private DDR200 tuning sequence reads back the controller after CMD19,
+card-clock enable and buffer-ready acknowledgement. This places the existing
+microsecond waits after the writes, following Hekate's commit boundaries and
+Switchroot's T210 register-write quirk. It is a sequencing correction candidate,
+not proof that posted writes caused the recorded one-tap window.
+
+Attempt diagnostics now retain `Ddr200PassMap0..3` and `Ddr200ReadyMap0..3`.
+Bit `n % 32` in word `n / 32` describes tap `n` (0 through 127). Pass bits
+require both buffer-ready and the sampled-clock bit; ready bits alone do not
+mean a valid tuning pattern. `Ddr200FirstTimeoutTap` is `0xffffffff` when no
+sample timed out. `Ddr200TuningErrors` ORs the SDHCI error-status bits observed
+while polling. The setup control registers, clock/divisor/source and final
+vendor clock register are saved separately from the recovered SDR104 state.
+
+`Ddr200Window` is the longest consecutive passing run. A value of one can
+describe multiple isolated passing taps. `Ddr200Tap=0` on rejection is the
+policy's default output, not evidence that tap zero passed.
+
+The transport model now commits posted commands on controller reads and makes
+tuning results arrive only after reset and card-clock resumption. Mutation
+checks reject missing command commits, clock enable and vendor tuning setup.
+An artificial 64-isolated-tap case reproduces the old 128-sample/one-timeout/
+one-tap aggregate; its retained bitmaps distinguish it from a single good tap.
+These host tests establish sequencing and diagnostic behavior, not electrical
+DDR200 acceptance. The 128-point scan, eight-tap minimum, clocks, partition
+identity checks and four baseline sector comparisons are unchanged.
+
 ### DDR200 fallback evidence (0.5.1.1)
 
 The read-only registry snapshot at **2026-11-13 00:23:58 UTC** reports

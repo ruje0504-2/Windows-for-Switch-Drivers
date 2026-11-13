@@ -1418,6 +1418,10 @@ typedef struct _SDHC_EXTENSION {
     ULONG T214DdrWindow, T214DdrTap, T214DdrClockKhz;
     /* Preserve attempt evidence when recovery discards SCR/CMD6 caches. */
     ULONG T214DdrCapability, T214DdrTuningSamples, T214DdrTuningTimeouts, T214DdrTuningControl2;
+    ULONG T214DdrPassMap[4], T214DdrReadyMap[4];
+    ULONG T214DdrFirstTimeoutTap, T214DdrTuningErrors;
+    ULONG T214DdrTuningControl0, T214DdrTuningControl1, T214DdrSetupControl2;
+    ULONG T214DdrTuningClock, T214DdrTuningSource, T214DdrTuningVendorClock;
 #endif
 #endif
 #if NV_T210_LITE_WINARM_WRITE

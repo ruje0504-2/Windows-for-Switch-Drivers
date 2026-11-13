@@ -6,6 +6,7 @@ The model checks sequencing and failure handling, not electrical timing.
 from pathlib import Path
 import subprocess
 import tempfile
+import resource
 
 root = Path(__file__).resolve().parents[1]
 code = r'''
@@ -60,6 +61,10 @@ typedef struct {
  ULONG T214DdrStatus,T214DdrRecoveryStatus,T214DdrFallbacks;
  ULONG T214DdrWindow,T214DdrTap,T214DdrClockKhz,TargetFacts,SpeedMode;
  ULONG T214DdrCapability,T214DdrTuningSamples,T214DdrTuningTimeouts,T214DdrTuningControl2;
+ ULONG T214DdrPassMap[4],T214DdrReadyMap[4];
+ ULONG T214DdrFirstTimeoutTap,T214DdrTuningErrors;
+ ULONG T214DdrTuningControl0,T214DdrTuningControl1,T214DdrSetupControl2;
+ ULONG T214DdrTuningClock,T214DdrTuningSource,T214DdrTuningVendorClock;
 } SDHC_EXTENSION,*PSDHC_EXTENSION;
 static struct {ULONG ClockKhzRequested,ClockKhzActual,CarSdmmc1After,RegClockControl;} NvDiag;
 static UCHAR regs[512],car[4096],fifo[512];
@@ -69,6 +74,9 @@ static unsigned good_first,good_last;
 static bool timeout_tuning,corrupt_ddr,lost_vendor_reply,power_fails,wrong_cid,changed_rca;
 static bool clock_fails,cmd_timeout,app_prefix,reset_stuck;
 static bool early_tuning_end;
+static bool tuning_armed,tuning_flushed,tuning_reset,tuning_pending;
+static bool isolated_taps,last_tap_timeout;
+static unsigned tuning_tap,tuning_committed_at,tuning_due;
 static ULONG raw32(PUCHAR p,ULONG off){ULONG v;memcpy(&v,p+off,4);return v;}
 static void put32(PUCHAR p,ULONG off,ULONG v){memcpy(p+off,&v,4);}
 static USHORT raw16(PUCHAR p,ULONG off){USHORT v;memcpy(&v,p+off,2);return v;}
@@ -89,7 +97,15 @@ static void model_command(USHORT value){
  read_offset=0;read_size=raw16(regs,4);memset(fifo,0,sizeof(fifo));
  put32(regs,0x30,1|(read_size?32:2));put32(regs,0x10,0x900);
  if(cmd_timeout){put32(regs,0x30,0);return;}
- if(index==19){assert(!(raw16(regs,0x2c)&4));put32(regs,0x30,0);return;}
+  if(index==19){
+   assert(!(raw16(regs,0x2c)&4));
+   assert((raw16(regs,0x3e)&0x4f)==0x4c);
+   assert(raw16(regs,4)==64&&raw16(regs,6)==1&&raw16(regs,12)==16&&arg==0);
+   assert((raw32(regs,0x1c0)&0x2ffc0)==0x24040&&raw32(regs,0x1c4)==0);
+   tuning_tap=(raw32(regs,0x100)>>16)&255;
+   tuning_armed=true;tuning_flushed=tuning_reset=tuning_pending=false;
+   put32(regs,0x30,0);return;
+  }
  if(index==0){card_mode=0;app_prefix=false;}
  else if(index==2){for(unsigned i=0;i<4;i++)put32(regs,0x10+i*4,cid[i]^(wrong_cid&&i==0?1:0));}
  else if(index==3)put32(regs,0x10,changed_rca?card_rca+0x10000:card_rca);
@@ -111,7 +127,23 @@ static void model_command(USHORT value){
   if(corrupt_ddr&&(card_mode>>4)==14)fifo[23]^=1;
  }
 }
+/* A same-controller read commits posted writes. Reset alone cannot create
+ * tuning data: the card clock must resume and a response must arrive later.
+ * This models the ordering contract, not analog margins or a card's DLL. */
+static void model_read(void){
+ if(tuning_armed&&!tuning_flushed){tuning_flushed=true;tuning_committed_at=clock_us;}
+ if(tuning_pending&&(raw16(regs,0x2c)&4)&&clock_us>=tuning_due){
+  USHORT hc=raw16(regs,0x3e);
+  bool good=isolated_taps?!(tuning_tap&1):(tuning_tap>=good_first&&tuning_tap<=good_last);
+  if(good)hc|=128;else hc&=~128u;
+  if(tuning_tap==127||early_tuning_end)hc&=~64u;
+  put16(regs,0x3e,hc);
+  put32(regs,0x30,(timeout_tuning||(last_tap_timeout&&tuning_tap==127))?0:32);
+  tuning_armed=tuning_pending=false;
+ }
+}
 static ULONG T214Read(PUCHAR b,ULONG off){
+ if(b==regs)model_read();
  if(b==regs&&off==SDHC_DATA_PORT){
   assert(read_offset+4<=read_size);ULONG v=raw32(fifo,read_offset);read_offset+=4;
   if(read_offset==read_size)put32(regs,0x30,raw32(regs,0x30)|2);
@@ -120,10 +152,14 @@ static ULONG T214Read(PUCHAR b,ULONG off){
  return raw32(b,off);
 }
 static void T214Write(PUCHAR b,ULONG off,ULONG v){
+ if(b==regs&&off==0x100){
+  assert(!(raw16(regs,0x2c)&4));
+  assert(!(raw32(regs,0x1c0)&0x20000));
+ }
  if(b==regs&&off==0x30)put32(b,off,raw32(b,off)&~v);else put32(b,off,v);
 }
-static USHORT SdhcReadRegisterUshort(PSDHC_EXTENSION s,ULONG off){return raw16(s->BaseAddress,off);}
-static UCHAR SdhcReadRegisterUchar(PSDHC_EXTENSION s,ULONG off){return s->BaseAddress[off];}
+static USHORT SdhcReadRegisterUshort(PSDHC_EXTENSION s,ULONG off){model_read();return raw16(s->BaseAddress,off);}
+static UCHAR SdhcReadRegisterUchar(PSDHC_EXTENSION s,ULONG off){model_read();return s->BaseAddress[off];}
 static void SdhcWriteRegisterUlong(PSDHC_EXTENSION s,ULONG off,ULONG v){T214Write(s->BaseAddress,off,v);}
 static void SdhcWriteRegisterUshort(PSDHC_EXTENSION s,ULONG off,USHORT v){
  if(off==0x30)put16(s->BaseAddress,off,raw16(s->BaseAddress,off)&~v);
@@ -131,18 +167,19 @@ static void SdhcWriteRegisterUshort(PSDHC_EXTENSION s,ULONG off,USHORT v){
   if(off==0x2c&&(v&1)&&!clock_fails)v|=2;
   put16(s->BaseAddress,off,v);
   if(off==SDHC_COMMAND)model_command(v);
+   if(off==SDHC_CLOCK_CONTROL&&(v&4)&&tuning_armed&&tuning_reset){
+    tuning_pending=true;tuning_due=clock_us+5;
+   }
  }
 }
 static void SdhcWriteRegisterUchar(PSDHC_EXTENSION s,ULONG off,UCHAR v){
  s->BaseAddress[off]=v;
  if(off==SDHC_RESET&&!reset_stuck){
   s->BaseAddress[off]=0;
-  if(last_command==19){
-   unsigned tap=(raw32(regs,0x100)>>16)&255;
-   USHORT hc=raw16(regs,0x3e);
-   if(tap>=good_first&&tap<=good_last)hc|=128;else hc&=~128u;
-   if(tap==127||early_tuning_end)hc&=~64u;
-   put16(regs,0x3e,hc);put32(regs,0x30,timeout_tuning?0:32);
+  if(tuning_armed){
+   assert(tuning_flushed&&clock_us-tuning_committed_at>=1);
+   assert(!(raw16(regs,0x2c)&4));
+   tuning_reset=true;put32(regs,0x30,0);
   }
  }
 }
@@ -177,6 +214,8 @@ static void init(SDHC_EXTENSION *s){
  good_first=32;good_last=95;
  timeout_tuning=corrupt_ddr=lost_vendor_reply=power_fails=wrong_cid=changed_rca=false;
  clock_fails=cmd_timeout=app_prefix=reset_stuck=early_tuning_end=false;
+ tuning_armed=tuning_flushed=tuning_reset=tuning_pending=false;
+ isolated_taps=last_tap_timeout=false;
 }
 int main(void){
  SDHC_EXTENSION s;ULONG data[128];
@@ -193,6 +232,12 @@ int main(void){
  init(&s);assert(T214DdrTry(&s)==0&&s.T214DdrActive&&card_mode==0xe0);
  assert(s.T214DdrWindow==64&&s.T214DdrTap==63&&NvDiag.ClockKhzActual==199680);
  assert(s.T214DdrCapability==2&&s.T214DdrTuningSamples==128&&!s.T214DdrTuningTimeouts);
+ assert(s.T214DdrPassMap[0]==0&&s.T214DdrPassMap[1]==UINT32_MAX&&
+        s.T214DdrPassMap[2]==UINT32_MAX&&s.T214DdrPassMap[3]==0);
+ for(unsigned i=0;i<4;i++)assert(s.T214DdrReadyMap[i]==UINT32_MAX);
+ assert(s.T214DdrFirstTimeoutTap==UINT32_MAX&&!s.T214DdrTuningErrors);
+ assert(s.T214DdrTuningControl0==0x24040&&s.T214DdrTuningControl1==0&&s.T214DdrSetupControl2==0x4c);
+ assert(s.T214DdrTuningClock==0x107&&s.T214DdrTuningSource==0xe0000003);
  assert(read_count==5&&power_cycles==0&&raw32(car,0x150)==0xe0000003);
  assert((raw16(regs,0x3e)&7)==4&&s.T214Tuned);
  assert(T214DdrClock(&s,0)==0&&NvDiag.ClockKhzActual==0&&!(raw16(regs,0x2c)&5));
@@ -214,6 +259,14 @@ int main(void){
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&s.T214DdrWindow==1&&power_cycles==1);
  assert(s.T214DdrCapability==2&&s.T214DdrTuningSamples==1&&s.T214DdrTuningTimeouts==0);
  assert(!(s.T214DdrTuningControl2&64));
+ /* The real 128/1/1/0x0c aggregate is ambiguous: 64 isolated successful
+  * samples have the same longest run as a single successful sample. */
+ init(&s);isolated_taps=last_tap_timeout=true;
+ assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&s.T214DdrWindow==1);
+ assert(s.T214DdrTuningSamples==128&&s.T214DdrTuningTimeouts==1&&s.T214DdrTuningControl2==12);
+ assert(s.T214DdrFirstTimeoutTap==127&&s.T214CardInfoValid==4);
+ for(unsigned i=0;i<4;i++)assert(s.T214DdrPassMap[i]==0x55555555);
+ assert(s.T214DdrReadyMap[3]==0x7fffffff&&s.T214DdrTuningSource==0xe0000003);
  init(&s);lost_vendor_reply=true;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&card_mode==3&&power_cycles==1);
  init(&s);corrupt_ddr=true;
@@ -249,7 +302,7 @@ int main(void){
  cmd_timeout=true;
  assert(T214DdrCommand(&s,13,card_rca,0x1a,NULL,0,NULL)==STATUS_IO_TIMEOUT&&clock_us==50000);
  assert(raw32(regs,0x34)==0x12345678&&raw32(regs,0x38)==0x87654321);
- puts("PASS: actual DDR transaction/tuning, readback mismatch, narrow-window/timeout recovery, RCA/CID fail-closed, SDPORT event-mask restoration, no private data writes");
+ puts("PASS: DDR posted-write/reset/clock ordering, delayed tuning results, retained sample maps, readback mismatch, narrow-window recovery, RCA/CID checks, event masks, no private data writes");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='lite-ddr200-transport-') as temp:
@@ -260,3 +313,34 @@ with tempfile.TemporaryDirectory(prefix='lite-ddr200-transport-') as temp:
                         f'-DTEST_VISIBLE={visible}', '-fsanitize=address,undefined',
                         '-g', str(path / 'test.c'), '-o', str(path / 'test')], check=True)
         subprocess.run([str(path / 'test')], check=True)
+    # Prove that the model rejects missing hardware actions that the previous
+    # reset-generated result model accepted. Only temporary copies are edited.
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    transport = root / 'src/t214_ddr200.h'
+    original = transport.read_text()
+    mutations = {
+        'missing-clock-enable': (
+            '        SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, clock | SDHC_CC_CLOCK_ENABLE);\n'
+            '        (VOID)SdhcReadRegisterUshort(s, SDHC_CLOCK_CONTROL);',
+            '        /* mutation: keep the card clock gated */\n'
+            '        (VOID)SdhcReadRegisterUshort(s, SDHC_CLOCK_CONTROL);'),
+        'missing-command-commit': (
+            '        (VOID)SdhcReadRegisterUshort(s, SDHC_CLOCK_CONTROL);\n        KeStallExecutionProcessor(1);\n        if (!T214DdrResetLines(s))',
+            '        KeStallExecutionProcessor(1);\n        if (!T214DdrResetLines(s))'),
+        'missing-tuning-setup': (
+            '    T214Write(b, 0x1c0, (T214Read(b, 0x1c0) & ~0xffc0u) |\n'
+            '               (2u << 13) | (1u << 6) | (1u << 17));',
+            '    /* mutation: omit tuning iteration/multiplier setup */'),
+    }
+    for name, (before, after) in mutations.items():
+        assert original.count(before) == 1, name
+        altered = path / (name + '.h')
+        altered.write_text(original.replace(before, after))
+        (path / 'test.c').write_text(code.replace(str(transport), str(altered)))
+        subprocess.run(['clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                        '-DTEST_VISIBLE=0', '-I' + str(root / 'src'),
+                        '-fsanitize=address,undefined', '-g', str(path / 'test.c'),
+                        '-o', str(path / 'test')], check=True)
+        result = subprocess.run([str(path / 'test')], capture_output=True, text=True)
+        assert result.returncode != 0 and 'Assertion' in result.stderr and 'failed' in result.stderr, (name, result.stderr)
+        print('PASS: model rejects ' + name)
