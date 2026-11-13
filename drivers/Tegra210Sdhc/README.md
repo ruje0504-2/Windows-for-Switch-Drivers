@@ -336,6 +336,38 @@ These host tests establish sequencing and diagnostic behavior, not electrical
 DDR200 acceptance. The 128-point scan, eight-tap minimum, clocks, partition
 identity checks and four baseline sector comparisons are unchanged.
 
+### 0.5.1.2 installation and runtime result
+
+The physical Lite selected **0.5.1.2 / `oem90.inf` / Code 0** after restart,
+with SYS SHA-256
+`5389b30d3a04fad330b9afef36b0d500ad363c6c5b39c55c9b60096669bfd945`.
+The installed SD source is `5345692e4b7ec0d52e80937ae451bb2c52750fe8`.
+The final combined SD/CPU validation boot was 2026-11-12 **17:48:07 PST**
+(2026-11-13 **01:48:07 UTC**). An 8 MiB WriteThrough write, `Flush(true)`
+and SHA-256 readback matched at 17:50 PST. Partitions and power settings
+were unchanged, and there were no `volmgr` events in that boot's checked log.
+Actual crash-dump capture remains unverified; no crash was forced.
+
+| Final attempt evidence | Value |
+| --- | --- |
+| Capability at attempt / samples | 2 (advertised) / 128 |
+| Passing taps | 30, 77 |
+| Buffer-ready samples / timeouts | 128 / 0 |
+| Longest passing run / minimum | 1 / 8 |
+| DDR status / recovery status | `0xc0000185` / 0 |
+| DDR active / fallback count | 0 / 1 |
+| Operating mode | SDR104, 4-bit, 1.8 V, 199.68 MHz |
+| ADMA errors | 0 |
+
+An earlier 0.5.1.2 boot produced passing taps 30, 77 and 123, with one timeout
+at tap 76. The final zero-timeout scan still had only isolated passing taps.
+The added readbacks did not establish a usable DDR200 window on this card.
+The evidence supports rejecting this tuning result and retaining SDR104; it
+does not by itself prove that DLL synchronization is the root cause.
+The final CPU/fan driver was **1.0.0.13**, with requested and actual CPU
+frequency **1497.6 MHz**; its source is
+`bc411af3349a0cb270a0f8ddf1b7a7343af7aaa2`.
+
 ### DDR200 fallback evidence (0.5.1.1)
 
 The read-only registry snapshot at **2026-11-13 00:23:58 UTC** reports
