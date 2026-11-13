@@ -147,6 +147,7 @@ static VOID T214DdrSetTap(PSDHC_EXTENSION s, ULONG Tap)
 static NTSTATUS T214DdrManualTuning(PSDHC_EXTENSION s, PULONG Selected,
                                    PULONG Window)
 {
+    s->T214DdrTuningSamples = s->T214DdrTuningTimeouts = s->T214DdrTuningControl2 = 0;
     if (!s->T214Voltage18 ||
         (SdhcReadRegisterUshort(s, SDHC_HOST_CONTROL2) & 7) != 4)
         return STATUS_INVALID_DEVICE_STATE;
@@ -177,6 +178,7 @@ static NTSTATUS T214DdrManualTuning(PSDHC_EXTENSION s, PULONG Selected,
         SdhcWriteRegisterUshort(s, SDHC_TRANSFER_MODE, SDHC_TM_TRANSFER_READ);
         SdhcWriteRegisterUlong(s, SDHC_ARGUMENT, 0);
         SdhcWriteRegisterUshort(s, SDHC_COMMAND, (19u << 8) | 0x3a);
+        s->T214DdrTuningSamples = tap + 1;
         KeStallExecutionProcessor(1);
         if (!T214DdrResetLines(s)) goto done;
         SdhcWriteRegisterUshort(s, SDHC_CLOCK_CONTROL, clock | SDHC_CC_CLOCK_ENABLE);
@@ -191,10 +193,12 @@ static NTSTATUS T214DdrManualTuning(PSDHC_EXTENSION s, PULONG Selected,
         SdhcWriteRegisterUshort(s, SDHC_INTERRUPT_STATUS, SDHC_IS_BUFFER_READ_READY);
         KeStallExecutionProcessor(1);
         hc = SdhcReadRegisterUshort(s, SDHC_HOST_CONTROL2);
+        s->T214DdrTuningControl2 = hc;
         if (ready && (hc & SDHC_HC2_SELECT_SAMPLING_CLOCK))
             results[tap / 32] |= 1u << (tap % 32);
         tested = tap + 1;
         if (!ready) {
+            s->T214DdrTuningTimeouts = timeouts + 1;
             if (++timeouts >= T214_DDR200_TAPS / 32 || !T214DdrResetLines(s)) goto done;
         }
         if (!(hc & SDHC_HC2_EXECUTE_TUNING)) break;
@@ -387,7 +391,10 @@ static NTSTATUS T214DdrTry(PSDHC_EXTENSION s)
     s->T214DdrStatus = STATUS_NOT_SUPPORTED;
     if ((s->T214CardInfoValid & 7) != 7 || s->T214Rca == 0) return STATUS_SUCCESS;
     s->T214DdrAttempted = TRUE;
-    if (!T214Ddr200Supported(s->T214Scr, s->T214SwitchStatus) ||
+    /* 0 = not observed, 1 = unsupported, 2 = advertised. Do not overwrite
+     * this with the empty metadata cache left by a successful fallback. */
+    s->T214DdrCapability = T214Ddr200Supported(s->T214Scr, s->T214SwitchStatus) ? 2 : 1;
+    if (s->T214DdrCapability != 2 ||
         s->T214SwitchStatus[16] != 3 || (s->T214SwitchStatus[15] & 15) != 0)
         return STATUS_SUCCESS;
     st = T214DdrCommand(s, 17, WINARM_FIRST, 0x1a, baseline, sizeof(baseline), NULL);

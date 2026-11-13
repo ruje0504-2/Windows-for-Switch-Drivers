@@ -59,6 +59,7 @@ typedef struct {
  BOOLEAN T214DdrAttempted,T214DdrActive,T214DdrFatal,T214DdrRecoverNeeded;
  ULONG T214DdrStatus,T214DdrRecoveryStatus,T214DdrFallbacks;
  ULONG T214DdrWindow,T214DdrTap,T214DdrClockKhz,TargetFacts,SpeedMode;
+ ULONG T214DdrCapability,T214DdrTuningSamples,T214DdrTuningTimeouts,T214DdrTuningControl2;
 } SDHC_EXTENSION,*PSDHC_EXTENSION;
 static struct {ULONG ClockKhzRequested,ClockKhzActual,CarSdmmc1After,RegClockControl;} NvDiag;
 static UCHAR regs[512],car[4096],fifo[512];
@@ -67,6 +68,7 @@ static ULONG last_command,last_argument,read_offset,read_size,commands[2048],clo
 static unsigned good_first,good_last;
 static bool timeout_tuning,corrupt_ddr,lost_vendor_reply,power_fails,wrong_cid,changed_rca;
 static bool clock_fails,cmd_timeout,app_prefix,reset_stuck;
+static bool early_tuning_end;
 static ULONG raw32(PUCHAR p,ULONG off){ULONG v;memcpy(&v,p+off,4);return v;}
 static void put32(PUCHAR p,ULONG off,ULONG v){memcpy(p+off,&v,4);}
 static USHORT raw16(PUCHAR p,ULONG off){USHORT v;memcpy(&v,p+off,2);return v;}
@@ -139,7 +141,7 @@ static void SdhcWriteRegisterUchar(PSDHC_EXTENSION s,ULONG off,UCHAR v){
    unsigned tap=(raw32(regs,0x100)>>16)&255;
    USHORT hc=raw16(regs,0x3e);
    if(tap>=good_first&&tap<=good_last)hc|=128;else hc&=~128u;
-   if(tap==127)hc&=~64u;
+   if(tap==127||early_tuning_end)hc&=~64u;
    put16(regs,0x3e,hc);put32(regs,0x30,timeout_tuning?0:32);
   }
  }
@@ -174,7 +176,7 @@ static void init(SDHC_EXTENSION *s){
  card_mode=3;command_count=power_cycles=read_count=last_command=clock_us=0;
  good_first=32;good_last=95;
  timeout_tuning=corrupt_ddr=lost_vendor_reply=power_fails=wrong_cid=changed_rca=false;
- clock_fails=cmd_timeout=app_prefix=reset_stuck=false;
+ clock_fails=cmd_timeout=app_prefix=reset_stuck=early_tuning_end=false;
 }
 int main(void){
  SDHC_EXTENSION s;ULONG data[128];
@@ -184,10 +186,13 @@ int main(void){
 #endif
  init(&s);s.T214Scr[3]=0;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&command_count==0&&power_cycles==0);
+ assert(s.T214DdrCapability==1&&!s.T214DdrTuningSamples);
  init(&s);s.T214CardInfoValid=0;
  assert(T214DdrTry(&s)==0&&!s.T214DdrAttempted&&command_count==0);
+ assert(s.T214DdrCapability==0);
  init(&s);assert(T214DdrTry(&s)==0&&s.T214DdrActive&&card_mode==0xe0);
  assert(s.T214DdrWindow==64&&s.T214DdrTap==63&&NvDiag.ClockKhzActual==199680);
+ assert(s.T214DdrCapability==2&&s.T214DdrTuningSamples==128&&!s.T214DdrTuningTimeouts);
  assert(read_count==5&&power_cycles==0&&raw32(car,0x150)==0xe0000003);
  assert((raw16(regs,0x3e)&7)==4&&s.T214Tuned);
  assert(T214DdrClock(&s,0)==0&&NvDiag.ClockKhzActual==0&&!(raw16(regs,0x2c)&5));
@@ -198,12 +203,17 @@ int main(void){
  good_first=40;good_last=46;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&!s.T214DdrFatal&&power_cycles==1);
  assert(s.T214DdrWindow==7&&s.T214DdrFallbacks==1&&card_mode==3&&s.TargetFacts==expected_facts);
+ assert(s.T214DdrCapability==2&&s.T214CardInfoValid==4&&s.T214DdrTuningSamples==128);
  /* Reset-all loses the SDPORT-owned event masks. Recovery must restore both
   * masks before the next interrupt-driven disk request can complete. */
  assert(raw32(regs,0x34)==0x12345678&&raw32(regs,0x38)==0x87654321);
  unsigned before=command_count;assert(T214DdrTry(&s)==0&&command_count==before);
  init(&s);good_last=38;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&s.T214DdrWindow==7&&power_cycles==1);
+ init(&s);good_first=good_last=0;early_tuning_end=true;
+ assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&s.T214DdrWindow==1&&power_cycles==1);
+ assert(s.T214DdrCapability==2&&s.T214DdrTuningSamples==1&&s.T214DdrTuningTimeouts==0);
+ assert(!(s.T214DdrTuningControl2&64));
  init(&s);lost_vendor_reply=true;
  assert(T214DdrTry(&s)==0&&!s.T214DdrActive&&card_mode==3&&power_cycles==1);
  init(&s);corrupt_ddr=true;

@@ -306,3 +306,52 @@ Hardware acceptance still requires a package built for the actual card, a
 normal boot/read/write check, successful dump-stack initialization and a
 retrieved dump that a debugger can open. Record that package's version and
 hash separately; compilation and Code 0 do not establish successful capture.
+
+### DDR200 fallback evidence (0.5.1.1)
+
+The read-only registry snapshot at **2026-11-13 00:23:58 UTC** reports
+`Ddr200Active=0`, `Ddr200Status=0xc0000185`, `Ddr200RecoveryStatus=0`,
+`Ddr200Fallbacks=1`, `Ddr200Window=1`, `Ddr200CardInfo=4`, and
+`Ddr200Capable=0`. Standard bus mode is SDR104 (`BusSpeed=7`), four-bit,
+1.8 V, with `ClockKhzActual=199680` and no recorded ADMA errors. These are
+driver diagnostic snapshots, not a throughput measurement or fresh MMIO probe.
+
+The active driver contains DDR200 support despite its bound INF version
+0.4.0.1. Pre-install backup at 00:32:58 UTC confirms the running service uses
+`System32\drivers\nvtsdhc.sys` (44,432 bytes, SHA256 `5ce2520d…`), while
+exporting the bound `oem23.inf` produces a different 31,632-byte SYS
+(`25a456e2…`). Thus the bound package label does not version the separately
+updated system file. Both the live image and the original DriverStore package
+are retained as distinct backups before replacing the package.
+
+The source permits the vendor transition only after a positive
+capability check. Successful fallback deliberately discards the SCR/CMD6
+cache while retaining CID/RCA, so the later `Ddr200Capable=0` does **not**
+prove that the card never advertised DDR200. A one-tap window fails the
+eight-tap requirement, but the old record does not reveal how many taps
+were tested before the tuning engine stopped.
+
+Candidate **0.5.1.1** adds four persistent diagnostic values without changing
+clock limits, tuning decisions or the fallback sequence:
+
+| Value | Meaning |
+| --- | --- |
+| `Ddr200CapabilityAtAttempt` | 0: not observed; 1: unsupported SCR/CMD6 capability; 2: capability advertised. Retained across fallback. |
+| `Ddr200TuningSamples` | Number of CMD19 samples actually issued in the last DDR tuning attempt. |
+| `Ddr200TuningTimeouts` | Number of missing buffer-ready responses in that attempt. |
+| `Ddr200TuningControl2` | Last sampled host-control-2 value, before cleanup clears the tuning bits. |
+
+The actual-function host model distinguishes a 128-sample narrow window from
+an early one-sample end, unsupported capability from unavailable metadata,
+and preserves the original advertised capability after recovery. Both
+partition views and the expanded queued diagnostic snapshot pass. The actual
+card's live GPT/NTFS/FAT metadata and visible MBR projection also match its
+saved private identity and the package's generated header; no partition
+metadata was written during that check.
+
+[Switchroot's DDR200 implementation](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/2d0059fd3167a8df756de2aa0489d4aa70a9fc15/drivers/mmc/host/sdhci-tegra.c#L1585)
+uses the same minimum window and describes cards that require DLL-based
+synchronization instead of the DDR50-host/manual-window method. The existing
+one-tap record does not distinguish that hardware limitation from an early
+tuning stop or another signaling/configuration issue. Do not relax the write
+qualification threshold or label the card unsupported from that record alone.

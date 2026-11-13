@@ -531,6 +531,10 @@ NvDiagSaveClock(
     NvDiagCapture( L"Ddr200Capable", (SdhcExtension->T214CardInfoValid & 3) == 3 &&
                    T214Ddr200Supported(SdhcExtension->T214Scr,
                                        SdhcExtension->T214SwitchStatus));
+    NvDiagCapture( L"Ddr200CapabilityAtAttempt", SdhcExtension->T214DdrCapability);
+    NvDiagCapture( L"Ddr200TuningSamples", SdhcExtension->T214DdrTuningSamples);
+    NvDiagCapture( L"Ddr200TuningTimeouts", SdhcExtension->T214DdrTuningTimeouts);
+    NvDiagCapture( L"Ddr200TuningControl2", SdhcExtension->T214DdrTuningControl2);
     NvDiagCapture( L"Ddr200Active", SdhcExtension->T214DdrActive);
     NvDiagCapture( L"Ddr200Status", SdhcExtension->T214DdrStatus);
     NvDiagCapture( L"Ddr200RecoveryStatus", SdhcExtension->T214DdrRecoveryStatus);

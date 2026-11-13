@@ -1416,6 +1416,8 @@ typedef struct _SDHC_EXTENSION {
     BOOLEAN T214DdrAttempted, T214DdrActive, T214DdrFatal, T214DdrRecoverNeeded;
     ULONG T214DdrStatus, T214DdrRecoveryStatus, T214DdrFallbacks;
     ULONG T214DdrWindow, T214DdrTap, T214DdrClockKhz;
+    /* Preserve attempt evidence when recovery discards SCR/CMD6 caches. */
+    ULONG T214DdrCapability, T214DdrTuningSamples, T214DdrTuningTimeouts, T214DdrTuningControl2;
 #endif
 #endif
 #if NV_T210_LITE_WINARM_WRITE
