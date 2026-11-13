@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  * Mariko CPU clock helper, owned by the Lite fan driver's passive timer.
- * PLL voltage 1120 mV is from both CPUB01_PLL_CVB_TABLE variants in L4T;
- * 1996.8 MHz stays below their common 2014.5 MHz / 1120 mV limit.
+ * The runtime CPU target is 1497.6 MHz. Retain the previously verified
+ * 1120 mV rail setting; this update changes frequency, not the voltage curve.
  * MAX77812 M4 is CPU. M1 (GPU), M3 (DRAM) and their registers are untouched.
  */
 #define CPU_CCLK_POLICY 0x020
@@ -15,6 +15,8 @@
 #define CPU_ON_CLKM    0x20000000u
 #define CPU_M4_VOUT    0x26
 #define CPU_OC_VOUT    174u /* 250 + 174*5 = 1120 mV */
+#define CPU_TARGET_N   78u
+#define CPU_TARGET_KHZ (38400u * CPU_TARGET_N / 2u)
 
 static ULONG SwCpuRead(PSWFAN_DEVICE Dev, ULONG Offset)
 {
@@ -105,7 +107,7 @@ static NTSTATUS SwCpuApply(PSWFAN_DEVICE Dev, BOOLEAN Overclock)
     if (Overclock) {
         Status = SwCpuVoltage(Dev, CPU_OC_VOUT);
         if (!NT_SUCCESS(Status)) return Status;
-        Status = SwCpuRelock(Dev, 2u | (104u << 8)); /* 38.4/2*104 = 1996.8 MHz */
+        Status = SwCpuRelock(Dev, 2u | (CPU_TARGET_N << 8)); /* 38.4/2*78 = 1497.6 MHz */
         if (!NT_SUCCESS(Status)) {
             if (SwCpuKhz(Dev) <= Dev->BootCpuKhz) (VOID)SwCpuVoltage(Dev, Dev->BootVout);
             return Status;
@@ -141,7 +143,7 @@ static VOID SwCpuPrepare(WDFDEVICE Device)
     if (NT_SUCCESS(Status)) {
         Dev->BootPllx = SwCpuRead(Dev, CPU_PLLX_BASE);
         Dev->BootCpuKhz = SwCpuKhz(Dev);
-        if (Dev->BootCpuKhz == 0 || Dev->BootCpuKhz >= LITE_CPU_KHZ ||
+        if (Dev->BootCpuKhz == 0 || Dev->BootCpuKhz >= CPU_TARGET_KHZ ||
             SwCpuRead(Dev, CPU_CCLK_POLICY) != CPU_ON_PLLX) Status = STATUS_INVALID_DEVICE_STATE;
     }
     Dev->CpuConfigured = NT_SUCCESS(Status);

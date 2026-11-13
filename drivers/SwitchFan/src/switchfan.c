@@ -440,7 +440,9 @@ NTSTATUS SwFanEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
     Dev->CpuOverclockEnabled = SwFanReadParam(L"CpuOverclockEnabled", 1) != 0;
     SwFanTrace(L"CpuOverclockEnabled", Dev->CpuOverclockEnabled);
     SwFanTrace(L"BacklightAvailable", Dev->BacklightPwm != NULL);
-    SwFanTrace(L"CpuRequestedKhz", Dev->Config.CpuKhz);
+    SwFanTrace(L"CpuHandoffKhz", Dev->Config.CpuKhz);
+    SwFanTrace(L"CpuRequestedKhz", Dev->IsLite && Dev->Config.CpuKhz == LITE_CPU_KHZ ?
+               CPU_TARGET_KHZ : Dev->Config.CpuKhz);
     SwFanTrace(L"RamRequestedKhz", Dev->Config.RamKhz);
     SwFanTrace(L"RamActualKhz", Dev->Config.RamActualKhz);
     SwFanTrace(L"HandoffStatus", Dev->Config.Status);
@@ -650,7 +652,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwFanParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwFanParamsPath);
     }
-    SwFanTrace(L"DriverVersion", 12);
+    SwFanTrace(L"DriverVersion", 13);
     WDF_DRIVER_CONFIG_INIT(&Config, SwFanEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);
 }

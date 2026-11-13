@@ -1,5 +1,14 @@
 # Switch Lite fan control
 
+Version **1.0.0.13** lowers the Lite runtime CPU target to **1497600 kHz**
+(approximately 1.5 GHz), as requested by the owner. `CpuRequestedKhz` reports
+that target; the new `CpuHandoffKhz` retains the firmware's original 1996800-kHz
+request. The firmware handoff format and RAM settings are unchanged. The driver
+keeps the previously verified 1120-mV CPU rail setting, the fan curve below,
+and the existing stock-clock restoration and thermal hysteresis. Host tests
+cover the new target, rail/clock ordering, thermal fallback and screen-off
+behavior; physical acceptance is recorded separately.
+
 Current version: **1.0.0.12**. On 2026-11-12, SSH confirmed the physical Lite
 selected `oem86.inf`, runtime `DriverVersion=12`, and `switchfan.sys` SHA-256
 `6a1c51a93ef0521482cff45bdb74442dd4aa22711f525adbede603dfc8e896ca`.

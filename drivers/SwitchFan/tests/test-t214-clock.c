@@ -75,7 +75,7 @@ int main(void){
  assert(!d.CpuApplied && count==0 && voltage==110 && SwCpuKhz(&d)==998400);
  d.CpuOverclockEnabled=TRUE;
  count=0;SwCpuTemperature(&d,40,TRUE);
- assert(d.CpuApplied && voltage==174 && SwCpuKhz(&d)==1996800 && events[0]=='V');
+  assert(d.CpuApplied && voltage==174 && SwCpuKhz(&d)==1497600 && events[0]=='V');
  count=0;SwCpuTemperature(&d,80,TRUE);
  assert(!d.CpuApplied && voltage==110 && SwCpuKhz(&d)==998400 && events[count-1]=='V');
  count=0;SwCpuTemperature(&d,75,TRUE);assert(!d.CpuApplied && count==0);
@@ -83,5 +83,9 @@ int main(void){
  SwCpuTemperature(&d,0,FALSE);assert(!d.CpuApplied && voltage==110);
  count=0;bad_read=true;SwCpuTemperature(&d,30,TRUE);
  assert(!d.CpuApplied && SwCpuKhz(&d)==998400 && count==1 && events[0]=='V');
+  /* Thermal fallback must not raise the clock above the new runtime target. */
+  bad_read=false;regs[0xe0/4]=(1u<<30)|(1u<<27)|(90u<<8)|2u;
+  d.CpuConfigured=FALSE;count=0;SwCpuPrepare(&d);
+  assert(!d.CpuConfigured && d.BootCpuKhz==1728000 && count==0);
  puts("PASS: CPU independent of EMC failure; M4-only writes, voltage ordering, thermal hysteresis and readback failure");
 }
