@@ -11,6 +11,10 @@ version **0.5.7.0**, adapter **Code 0**, and the exact installed SYS hash.
 Installed SYS SHA256 is
 `61fa3cae2790e0e97fe6c94842cdf809f677fe91e7691e92d09d8e95cfb1d865`;
 source commit is `125b618c366ff22863468057243278c2f60a36db`.
+The same binding and SYS hash were reverified at 2026-11-13 00:25–00:26 UTC;
+after the SD 0.5.1.1 restart, the inventory at 00:54 UTC still selects
+**0.5.7.0 / `oem88.inf`**. This adds version evidence, not sustained-link
+or repeated-reconnect acceptance.
 
 The November 12 SD-card inspection confirms that 0.5.6.0 and its `oem87.inf`
 binding were present before this update and the SYS hash matched the installation

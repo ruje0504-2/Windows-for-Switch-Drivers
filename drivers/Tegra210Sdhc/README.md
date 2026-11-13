@@ -355,3 +355,54 @@ synchronization instead of the DDR50-host/manual-window method. The existing
 one-tap record does not distinguish that hardware limitation from an early
 tuning stop or another signaling/configuration issue. Do not relax the write
 qualification threshold or label the card unsupported from that record alone.
+
+### 0.5.1.1 installation and runtime result
+
+The per-card FAT32-visible package from source **`cca463704d5a78577d86cc1adde1ce83dd547ae2`**
+was installed online with PnPUtil at 2026-11-13 **00:49:31–00:49:34 UTC**.
+Microsoft Inf2Cat 10.0.26100.0 (`/os:10_CO_ARM64`) reported zero errors and
+warnings. Native SignTool verified the signatures and both INF/SYS catalog
+members before installation. PnPUtil returned **3010**, requiring a restart.
+The single requested restart produced boot **00:52:13 UTC**. SSH verification
+at **00:54:02–00:54:13 UTC** confirms **0.5.1.1 / `oem89.inf` / Code 0** and
+the expected active SYS. This is a Windows boot/storage check, not a new
+physical GPU desktop acceptance.
+
+| Package file | SHA256 |
+| --- | --- |
+| `nvtsdhc.sys` (46,520 bytes) | `5286cb72a99a7bdc3e6e9fe4ac8f4e7a50c0d068917cdd217506daf320aeca7b` |
+| `nvtsdhc.inf` | `a48863e62bfec269b525708a7f978288b964d791362f9e1e0551481d0bf72d67` |
+| `nvtsdhc.cat` | `3800c39e424977a4f80613b976484b2c4dacc7f9c726fdd0c8198a85e6ba0fe0` |
+
+An **8 MiB** deterministic file was written with write-through, flushed to
+disk, reopened and hashed. Expected/read SHA256 both equal
+`bdfdf42093da25984ceec68638bf9a19d72e66737ec6f87f8b6f240e3563d617`;
+the temporary file was then removed. This verifies ordinary filesystem I/O,
+not power-loss integrity or sustained throughput. Both partition extents
+and the full `powercfg /query` output are unchanged. Fan version 12 and CPU
+**1996800 kHz** remain selected; Wi-Fi remains **0.5.7 / `oem88.inf`**.
+
+The new diagnostic values report:
+
+| Field | Value |
+| --- | --- |
+| Capability at attempt | **2: advertised** |
+| Actual tuning samples / timeouts | **128 / 1** |
+| Longest passing window | **1 tap** (minimum accepted: 8) |
+| Last host-control-2 | `0x000c` |
+| DDR attempt status / recovery status | `0xc0000185` / `0` |
+| Active DDR200 / fallback count | **0 / 1** |
+| Current standard timing / clock | **SDR104 / 199.68 MHz** |
+
+Thus this boot passed capability detection and completed the full scan,
+then rejected the narrow window and recovered to SDR104. It was not an
+unsupported-capability rejection or an early one-sample stop. The reason
+for the narrow physical window remains unproven; do not equate the cleared
+post-recovery capability cache with lack of card support.
+
+At **00:55:00 UTC**, an explicit successful query found no volmgr events
+since this boot; the real 512 MiB pagefile and small-dump configuration remain.
+Earlier boots repeatedly logged volmgr 46. The absence of a new initialization
+error is progress, but **no forced crash or actual dump capture was performed**.
+The retained postboot JSON is 14,769 bytes, SHA256
+`80a13bbce2f0d8e70915ac0463dfd7b449a144915c7198ae5b7f6603d1a2f407`.
