@@ -39,6 +39,9 @@ typedef uint16_t USHORT; typedef uint8_t UCHAR, BOOLEAN, *PUCHAR;
 #define _Out_opt_
 #define NT_ASSERT assert
 #define NV_T210_LITE_WINARM_WRITE 1
+#ifndef NV_T214_CRASHDUMP
+#define NV_T214_CRASHDUMP 1
+#endif
 #define SDHC_SPEC_VERSION_3 2
 #define SDHC_MAX_CLOCK_DIVISOR 256
 #define SDHC_MAX_CLOCK_DIVISOR_SPEC_3 2046
@@ -161,7 +164,8 @@ int main(void){
  r.Command.Index=25;r.Command.BlockCount=128;r.Command.Length=65536;
  r.Command.TransferDirection=SdTransferDirectionWrite;r.Command.TransferType=SdTransferTypeMultiBlock;
  assert(LiteAllowRequest(&s,&r));
- s.CrashdumpMode=1;assert(!LiteAllowRequest(&s,&r));s.CrashdumpMode=0;
+ s.CrashdumpMode=1;assert(LiteAllowRequest(&s,&r)==NV_T214_CRASHDUMP);
+ assert(!T214BuildDma(&s,&r));s.CrashdumpMode=0;
  assert(T214BuildDma(&s,&r));
  assert(!memcmp(data,bounce,65536));
  ULONG *desc=(ULONG*)(bounce+65536);
@@ -182,6 +186,9 @@ int main(void){
  s.T214Voltage18=1;assert(T214SetBusVoltage(&s,SdBusVoltage33)==0&&power_cycles==1);
  assert(!s.T214Voltage18&&s.T214CardOn);
  assert(T214SetBusVoltage(&s,SdBusVoltageOff)==0&&power_cycles==2&&!s.T214CardOn);
+ s.CrashdumpMode=1;s.T214CardOn=1;s.T214Voltage18=0;
+ assert(T214SetBusVoltage(&s,SdBusVoltage33)==0&&power_cycles==3);
+ s.CrashdumpMode=0;
  ULONG actual;USHORT reg=SdhcCalcClockFrequency(&s,200000,&actual);
  assert(reg==0&&actual==199680);
  for(ULONG target=400;target<200000;target+=137){SdhcCalcClockFrequency(&s,target,&actual);assert(actual<=target);}
@@ -210,7 +217,7 @@ int main(void){
   one.DataBuffer=b;LiteObserveReadRange(&bulk,&one,count);
   assert(old.TargetFacts==bulk.TargetFacts&&old.NextReadLba==bulk.NextReadLba&&!memcmp(a,b,count*512));
  }
- /* Normal I/O can span sixteen ADMA descriptors; dump uses 16 KiB separately. */
+ /* Normal I/O can span sixteen ADMA descriptors; dump never uses DMA. */
  static _Alignas(16) UCHAR large_bounce[528384],large_data[524288];
  memset(&s,0,sizeof(s));memset(&r,0,sizeof(r));
  s.T214Bounce=large_bounce;s.T214BouncePa.LowPart=0x8a000000;s.T214DmaCapacity=524288;

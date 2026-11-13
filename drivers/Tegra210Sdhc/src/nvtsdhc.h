@@ -7,6 +7,8 @@
 #if NV_T214_DDR200 && !NV_T214_SDR104
 #error "DDR200 requires the T214 SDR104 recovery path."
 #endif
+/* Both SDR104 and optional DDR200 use the same 3.3 V/PIO dump takeover. */
+#define NV_T214_CRASHDUMP NV_T214_SDR104
 /*++
 
 Copyright (c) 2014 Microsoft Corporation

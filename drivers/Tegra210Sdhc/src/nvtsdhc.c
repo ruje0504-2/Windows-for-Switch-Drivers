@@ -162,7 +162,8 @@ static BOOLEAN LiteAllowRequest(PSDHC_EXTENSION slot, PSDPORT_REQUEST request)
             return FALSE;
         }
         if ((slot->TargetFacts & required) != required ||
-            slot->CrashdumpMode || slot->AppPrefixAccepted ||
+            (slot->CrashdumpMode && (!NV_T214_CRASHDUMP || required != LiteWriteFacts)) ||
+            slot->AppPrefixAccepted ||
             cmd->Class == SdCommandClassApp || cmd->TransferDirection != SdTransferDirectionWrite ||
             cmd->TransferMethod != SdTransferMethodPio || cmd->BlockSize != 512 ||
             count == 0 || (cmd->Index == 24 && count != 1) ||
@@ -333,6 +334,9 @@ typedef struct _NV_DIAG {
 static NV_DIAG NvDiag = { .LastErrorCommand = 0xFF };
 #if NV_T214_SDR104
 #include "t214_sdmmc.h"
+#endif
+#if NV_T214_CRASHDUMP
+#include "t214_crashdump.h"
 #endif
 #if NV_T214_DDR200
 #include "t214_ddr200.h"
@@ -702,7 +706,7 @@ Return Value:
         .PowerControlCallback = SdhcPoFxPowerControlCallback,
         .Cleanup = SdhcCleanup,
         .PrivateExtensionSize = sizeof(SDHC_EXTENSION),
-        .CrashdumpSupported = !NV_T210_LITE_SLOT,
+        .CrashdumpSupported = !NV_T210_LITE_SLOT || NV_T214_CRASHDUMP,
     };
 
 #if NV_DIAG_STOP
@@ -972,11 +976,16 @@ Return value:
         }
         Source = READ_REGISTER_ULONG(&CarBase[NV_T210_CLK_SOURCE_SDMMC1 / sizeof(ULONG)]);
         MmUnmapIoSpace(CarBase, PAGE_SIZE);
-        if ((Source >> 29) != 0 && !(NV_T214_SDR104 && (Source >> 29) == 3)) {
+#if NV_T214_SDR104
+        Capabilities->BaseClockFrequencyKhz = T214InheritedClockKhz(Source);
+#else
+        Capabilities->BaseClockFrequencyKhz = (Source >> 29) == 0 ? 816000u / ((Source & 0xffu) + 2u) : 0;
+#endif
+        if (!Capabilities->BaseClockFrequencyKhz) {
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
-        // Hekate/UEFI left SDMMC1 on PLLP_OUT0 (408 MHz), with a 7.1 divider.
-        Capabilities->BaseClockFrequencyKhz = (2u * ((Source >> 29) == 3 ? 199680u : 408000u)) / ((Source & 0xffu) + 2u);
+        // Only observe the live clock here. The dump instance may be prepared
+        // while the normal driver is already using DDR200 / PLLC4 OUT0.
         NvDiag.CarSdmmc1Before = Source;
         NvDiag.CarSdmmc1After = Source;
     }
@@ -1024,8 +1033,8 @@ Return value:
 #endif
 
 #if NV_T214_SDR104
-    if (CrashdumpMode || Length < 0x200) return STATUS_NOT_SUPPORTED;
-    NTSTATUS t214Status = T214Initialize(SdhcExtension);
+    if (Length < 0x200) return STATUS_NOT_SUPPORTED;
+    NTSTATUS t214Status = CrashdumpMode ? T214InitializeDump(SdhcExtension) : T214Initialize(SdhcExtension);
     if (!NT_SUCCESS(t214Status)) return t214Status;
 #endif
 #if NV_T210_ADMA32
@@ -1205,6 +1214,21 @@ Return value:
     if (CurrentLimitMax >= 200) {
         Capabilities->Supported.Limit200mA = 1;
     }
+
+#if NV_T214_CRASHDUMP
+    if (CrashdumpMode) {
+        /* Keep the emergency path at default speed/3.3 V. No DMA,
+         * voltage switch, tuning interrupt or retuning timer is needed. */
+        Capabilities->Supported.HighSpeed = 0;
+        Capabilities->Supported.SDR50 = 0;
+        Capabilities->Supported.DDR50 = 0;
+        Capabilities->Supported.SDR104 = 0;
+        Capabilities->Supported.SignalingVoltage18V = 0;
+        Capabilities->Supported.TuningForSDR50 = 0;
+        Capabilities->Supported.SoftwareTuning = 0;
+        Capabilities->TuningTimerCountInSeconds = 0;
+    }
+#endif
 
     //
     // Initialize our array of outstanding requests to keep track
@@ -1575,6 +1599,10 @@ Return value:
     NTSTATUS Status;
 
     SdhcExtension = (PSDHC_EXTENSION) PrivateExtension;
+#if NV_T214_CRASHDUMP
+    Status = T214PrepareDumpWrite(SdhcExtension, Request);
+    if (!NT_SUCCESS(Status)) return Status;
+#endif
 #if NV_T214_DDR200
     if (SdhcExtension->T214DdrFatal &&
         (Request->Command.Index == 17 || Request->Command.Index == 18 ||
@@ -2117,6 +2145,12 @@ Return value:
     UCHAR Retries;
     UCHAR Mask;
 
+#if NV_T214_CRASHDUMP
+    if (SdhcExtension->CrashdumpMode && ResetType == SdResetTypeAll) {
+        NTSTATUS status = T214DumpTakeoverClock(SdhcExtension);
+        if (!NT_SUCCESS(status)) return status;
+    }
+#endif
 #if NV_T214_DDR200
     if (ResetType == SdResetTypeAll && SdhcExtension->T214DdrActive) {
         return T214DdrRecover(SdhcExtension);
@@ -2207,6 +2241,13 @@ Return value:
     if (ResetType == SdResetTypeAll) T214VendorReset(SdhcExtension);
 #endif
     SdhcWriteRegisterUchar(SdhcExtension, SDHC_HOST_CONTROL, HostControl);
+#if NV_T214_CRASHDUMP
+    if (SdhcExtension->CrashdumpMode && ResetType == SdResetTypeAll) {
+        /* Reset-all stops inherited DMA/DDR host state. With SDCLK still
+         * off, remove the card's vendor mode before SDPORT sends CMD0. */
+        return T214Power(SdhcExtension, TRUE);
+    }
+#endif
     return STATUS_SUCCESS;
 }
 
@@ -3111,7 +3152,8 @@ Return value:
     USHORT InterruptEnable;
 
     InterruptEnable =
-        SdhcReadRegisterUshort(SdhcExtension, SDHC_INTERRUPT_SIGNAL_ENABLE);
+        SdhcReadRegisterUshort(SdhcExtension, SdhcExtension->CrashdumpMode ?
+                              SDHC_INTERRUPT_STATUS_ENABLE : SDHC_INTERRUPT_SIGNAL_ENABLE);
 
     InterruptEnable |= NormalInterruptMask;
 
@@ -3127,6 +3169,8 @@ Return value:
         SdhcWriteRegisterUshort(SdhcExtension,
                                 SDHC_ERROR_SIGNAL_ENABLE,
                                 0xFFFF);
+    } else {
+        SdhcWriteRegisterUlong(SdhcExtension, SDHC_INTERRUPT_SIGNAL_ENABLE, 0);
     }
 
     //
@@ -3171,7 +3215,8 @@ Return value:
     USHORT InterruptDisable;
 
     InterruptDisable =
-        SdhcReadRegisterUshort(SdhcExtension, SDHC_INTERRUPT_SIGNAL_ENABLE);
+        SdhcReadRegisterUshort(SdhcExtension, SdhcExtension->CrashdumpMode ?
+                              SDHC_INTERRUPT_STATUS_ENABLE : SDHC_INTERRUPT_SIGNAL_ENABLE);
 
     InterruptDisable &= ~NormalInterruptMask;
 
@@ -3185,7 +3230,7 @@ Return value:
 
     SdhcWriteRegisterUshort(SdhcExtension,
                             SDHC_ERROR_STATUS_ENABLE,
-                            0);
+                            SdhcExtension->CrashdumpMode && InterruptDisable ? 0xFFFF : 0);
 
     //
     // Disable the interrupt signals from controller to OS.
@@ -3193,7 +3238,7 @@ Return value:
 
     SdhcWriteRegisterUshort(SdhcExtension,
                             SDHC_INTERRUPT_SIGNAL_ENABLE,
-                            InterruptDisable);
+                            SdhcExtension->CrashdumpMode ? 0 : InterruptDisable);
 
     SdhcWriteRegisterUshort(SdhcExtension,
                             SDHC_ERROR_SIGNAL_ENABLE,

@@ -133,13 +133,14 @@ segments and checked write bounds. Bounded diagnostics include `AdmaBufferBytes`
 Both hidden and visible builds retain SDR104/ADMA2 and the same runtime
 transfer limit. Earlier comparisons reported roughly one-minute stalls, but
 on the latest trial the owner found no clear responsiveness difference.
-The current card keeps FAT32 visible with package 0.5.0.3 and a matching
-BL33. Further performance investigation is deferred; this is not evidence of
+The November 7 trial kept FAT32 visible with package 0.5.0.3 and a matching
+BL33; the later November 12 inventory below identifies 0.4.0.1. This is not evidence of
 a completed performance fix. Keep both source profiles available.
 
-Candidate 0.4.2.0 removes the cancelled S4 experiment. The Lite profile does
+Candidate 0.4.2.0 removed the cancelled S4 experiment. That version did
 not advertise dump/hibernate support, allocate a dump DMA buffer or bypass the
-I2C gate in a dump path. Normal SDR104, card identity/write bounds and the
+I2C gate in a dump path. Version 0.5.1.0 adds the separate dump path described
+below. Normal SDR104, card identity/write bounds and the
 retained-power controller-context helpers remain. Those helpers do not provide
 whole-system sleep or re-identification after card power loss.
 
@@ -234,3 +235,74 @@ python3 drivers/Tegra210Sdhc/tests/test-diagnostics.py
 
 References: [Microsoft SD miniport](https://github.com/microsoft/Windows-driver-samples/tree/main/sd/miniport/sdhc)
 and [Switchroot SDHCI transfer limits](https://github.com/CTCaer/switch-l4t-kernel-4.9/blob/linux-5.1.2/drivers/mmc/host/sdhci.c).
+
+### Crash-dump source candidate (0.5.1.0)
+
+The read-only device inventory at **2026-11-12 23:56:31–23:57:09 UTC** found
+`nvtsdhc` **0.4.0.1**, Code 0, with a 44,432-byte SYS and SHA256
+`5ce2520d09ce67cc5b008da099d04cb821e9d314f1264c7ac8fb7ccb1447bd1b`.
+This supersedes the earlier package selection as the current installed version.
+Recent boots also recorded volmgr 46 (dump initialization failure), despite
+an existing 512 MiB pagefile and small-dump configuration. That observation
+does not establish the cause of the GPU failures or prove which dump component
+failed. [GPU investigation and collector](https://github.com/ruje0504-2/mesa-switch-woa/blob/main/tegra-x1-wddm/docs/NATIVE_DESKTOP_158.md)
+
+The bounded SDR104 profile, including its **DDR200 extension**, now advertises
+SDPORT dump support. Build with `NV_T210_LITE_WINARM_WRITE=1` and
+`NV_T214_SDR104=1`; retain `NV_T214_DDR200=1` for a DDR200-capable package.
+Use the same private partition-view header as the installed BL33. The legacy
+Lite profile without T214 board support continues to reject dump writes.
+The installed package version alone does not identify its active bus mode.
+
+- Dump initialization maps the board registers at PASSIVE_LEVEL, without
+  changing the live controller, acquiring the I2C gate or allocating DMA memory.
+  It recognizes both PLLC4 OUT2 (SDR104) and OUT0 (DDR200) clock sources.
+- At the dump stack's reset-all, takeover checks the current CAR state,
+  gates SDCLK before changing the source, restores SDMMC1's own clock/reset
+  when needed, and selects the common 199.68 MHz parent. Controller reset and
+  a card power cycle remove inherited DMA and proprietary DDR200 state before
+  SDPORT re-enumerates the card. It does not rely on a cached DDR flag: the
+  normal driver may have changed modes after dump preparation. No partition
+  table, filesystem format or card contents are reinitialized.
+- The dump instance re-enumerates at 3.3 V/default card speed, uses PIO with a
+  maximum 16 KiB request, and does not advertise voltage switching or tuning.
+  Normal SDR104/DDR200 and ADMA2 operation are retained.
+- When the dump stack takes over, LDO2 access uses bounded polling without
+  waiting on a gate that a stopped CPU could hold. Normal I2C serialization
+  remains enabled. The card is power-cycled instead of trusting cached voltage.
+- Before its first write, the dump instance can read and validate the physical
+  MBR and NTFS boot sector itself. The same card identity and WINARM extent
+  checks apply. FAT32, partition-table, erase and out-of-range writes remain
+  denied in dump mode, including in the FAT32-visible build.
+- Polled event enables are accumulated from the status-enable register.
+  The previous signal-enable read lost events because dump mode suppresses
+  IRQ signals. Disabling one event now preserves other polled events without
+  enabling IRQ delivery. Identity I/O restores the caller's masks and timeout.
+
+The new board helper retains GPL-2.0-only notices and identifies the reused
+identity-polling code from this repository's `f6ee89ede53e` experiment. The
+Microsoft callback framework remains attributed separately. The callback and
+initialization contracts were checked against WDK 10.0.26100.0 `sdport.h` and
+the [Microsoft SDHC sample](https://github.com/microsoft/Windows-driver-samples/blob/main/sd/miniport/sdhc/sdhc.c).
+SDPORT shares its dump/hibernate capability flag; this change does not enable
+Windows hibernation, alter sleep settings or establish S4/resume support.
+
+**Validation is local only.** ASan/UBSan tests exercise the actual helpers and
+PIO write callback with synthetic identities in both partition views: mapping
+failures, a late switch from SDR104 to DDR200, CAR clock/reset/PLL failures,
+the actual reset-all/power sequence, a held I2C gate, event masks, data comparison across partial writes,
+completion ordering, wrong card/volume, timeout/CRC/reset failures and write
+bounds. Existing DMA, retained-context, diagnostics and DDR200 tests pass.
+Eight ARM64 configuration builds pass with warnings treated as errors (SDR104,
+DDR200 and bounded PIO in both views, plus read-only and generic). Those build
+fixtures contain synthetic card identities and **must not be installed**.
+No driver installation, forced bugcheck or actual dump capture was performed.
+
+```sh
+python3 drivers/Tegra210Sdhc/tests/test-crashdump.py
+```
+
+Hardware acceptance still requires a package built for the actual card, a
+normal boot/read/write check, successful dump-stack initialization and a
+retrieved dump that a debugger can open. Record that package's version and
+hash separately; compilation and Code 0 do not establish successful capture.

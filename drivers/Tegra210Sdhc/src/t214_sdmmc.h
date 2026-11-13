@@ -31,6 +31,20 @@ static PUCHAR T214Map(ULONG Address, ULONG Length)
     return (PUCHAR)MmMapIoSpaceEx(pa, Length, PAGE_READWRITE | PAGE_NOCACHE);
 }
 
+static ULONG T214InheritedClockKhz(ULONG Source)
+{
+    ULONG parent;
+    switch (Source >> 29) {
+    case 0: parent = 408000; break;  /* PLLP OUT0 */
+    case 3: parent = 199680; break;  /* PLLC4 OUT2 */
+#if NV_T214_DDR200
+    case 7: parent = 998400; break;  /* PLLC4 OUT0, DDR200 runtime */
+#endif
+    default: return 0;
+    }
+    return 2u * parent / ((Source & 0xffu) + 2u);
+}
+
 /* I2C5 normal-mode short messages. The gate spans register-select + read and
  * read/modify/write, including restoration of the SPB controller's mode.
  * Neither clock nor reset nor another PMIC rail is changed here.
@@ -52,7 +66,9 @@ static NTSTATUS T214PmicMessage(PSDHC_EXTENSION s, BOOLEAN Read, ULONG *Word, UL
 }
 static NTSTATUS T214Ldo2(PSDHC_EXTENSION s, ULONG Millivolts, BOOLEAN On)
 {
-    NTSTATUS st = TegraI2c5Acquire(s->T214Gate);
+    /* The dump stack owns the controller after normal I/O has stopped.
+     * A gate held by a stopped CPU cannot be waited on during a bugcheck. */
+    NTSTATUS st = s->CrashdumpMode ? STATUS_SUCCESS : TegraI2c5Acquire(s->T214Gate);
     ULONG cfg, mask, value = 0x27, check = 0x27;
     if (!NT_SUCCESS(st)) return st;
     cfg = T214Read(s->T214I2c, 0); mask = T214Read(s->T214I2c, 0x64);
@@ -73,7 +89,7 @@ done:
     T214Write(s->T214I2c, 0x8c, 0x25);
     if (!T214WaitClear(s->T214I2c, 0x8c, 1, 10000)) st = STATUS_IO_TIMEOUT;
     T214Write(s->T214I2c, 0x64, mask);
-    TegraI2c5Release(s->T214Gate);
+    if (!s->CrashdumpMode) TegraI2c5Release(s->T214Gate);
     return st;
 }
 
@@ -161,7 +177,9 @@ static NTSTATUS T214Power(PSDHC_EXTENSION s, BOOLEAN On)
  */
 static NTSTATUS T214SetBusVoltage(PSDHC_EXTENSION s, SDPORT_BUS_VOLTAGE Voltage)
 {
-    if (Voltage == SdBusVoltage33 && s->T214CardOn && !s->T214Voltage18) {
+    /* Dump initialization only maps resources. The live driver can change
+     * card voltage afterwards, so its cached power state cannot be reused. */
+    if (!s->CrashdumpMode && Voltage == SdBusVoltage33 && s->T214CardOn && !s->T214Voltage18) {
         SdhcWriteRegisterUchar(s, SDHC_POWER_CONTROL, SDHC_PC_3_3V | SDHC_PC_BUS_POWER);
         SdPortWait(1000);
         return (SdhcReadRegisterUchar(s, SDHC_POWER_CONTROL) &
@@ -304,7 +322,7 @@ static BOOLEAN T214BuildDma(PSDHC_EXTENSION s, PSDPORT_REQUEST r)
     s->T214DmaActive = FALSE; s->T214DmaComplete = FALSE;
     if (c->Index != 17 && c->Index != 18 && c->Index != 24 && c->Index != 25) return FALSE;
     ULONG size = c->BlockCount * 512u;
-    if (s->T214DmaFault || s->T214Bounce == NULL || c->DataBuffer == NULL ||
+    if (s->CrashdumpMode || s->T214DmaFault || s->T214Bounce == NULL || c->DataBuffer == NULL ||
         c->TransferMethod != SdTransferMethodPio || c->BlockSize != 512 ||
         !c->BlockCount || c->BlockCount > s->T214DmaCapacity / 512 || c->Length < size) {
         s->T214PioFallbacks++; return FALSE;
