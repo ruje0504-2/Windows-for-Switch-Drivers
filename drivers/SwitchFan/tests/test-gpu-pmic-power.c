@@ -59,6 +59,8 @@ static bool bl_locked = false;
 static unsigned pmic_lock_acquires = 0;
 static int requestor_mode = KernelMode;
 static bool fail_pmic_write = false;
+static unsigned timer_starts = 0;
+static unsigned last_timer_ms = 0;
 static UCHAR pmic_regs[256];
 static ULONG car_regs[64];
 static char order_log[128];
@@ -76,6 +78,7 @@ typedef struct {
     UCHAR *Pwm;
     LITE_PERFORMANCE Config;
     void *Pmic;
+    void *Timer;
     WDFWAITLOCK PmicLock;
     WDFWAITLOCK BacklightLock;
     LARGE_INTEGER PmicIds[2];
@@ -84,6 +87,7 @@ typedef struct {
     BOOLEAN IsLite, Stopping, BacklightReady;
     BOOLEAN CpuConfigured, CpuApplied, CpuThrottled, CpuOverclockEnabled;
     BOOLEAN BaseCpuOverclockEnabled, GpuBridgeSeen, TempValid;
+    BOOLEAN ScreenOffIdle, SensorNeedsReinit, GpuRailOn;
     ULONG DisplayState, Duty, LastTemp;
     ULONG PowerMode, PolicySeq;
     volatile LONG GpuDvfsPolicy;
@@ -157,6 +161,8 @@ static VOID SwFanSetDuty(PSWFAN_DEVICE Dev, ULONG Duty) { Dev->Duty = Duty; }
 static NTSTATUS SwFanOpenTarget(void *d, LARGE_INTEGER i, void **t)
 { (void)d; (void)i; *t = (void *)1; return STATUS_SUCCESS; }
 static void WdfObjectDelete(void *p) { (void)p; }
+static void WdfTimerStart(void *t, unsigned ms)
+{ assert(t != NULL && !pmic_locked); ++timer_starts; last_timer_ms = ms; }
 static int WdfRequestGetRequestorMode(WDFREQUEST r) { (void)r; return requestor_mode; }
 static NTSTATUS WdfRequestRetrieveInputBuffer(WDFREQUEST r, size_t min_len, PVOID *buf, size_t *len)
 {
@@ -399,15 +405,20 @@ int main(void)
     assert(send_gpu_pmic(&d, &op) == STATUS_INVALID_PARAMETER);
 
     /* Disabling M1 allows restoring cold pre-acquisition voltage (<68), preserving 0x54! */
+    d.Timer = (void *)1;
     op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 0 };
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x06] == 0x54);
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x06] == 0x54 && !d.GpuRailOn);
     op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 20 };
     assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x23] == 20);
-    /* Re-enable at 800 mV for runtime tests. */
+    /* Re-enable at 800 mV while parked in ScreenOffIdle wakes thermal polling immediately! */
+    d.ScreenOffIdle = TRUE;
+    d.SensorNeedsReinit = FALSE;
+    timer_starts = 0;
     op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 110 };
     assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS);
     op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS);
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && d.GpuRailOn);
+    assert(!d.ScreenOffIdle && d.SensorNeedsReinit && timer_starts == 1 && last_timer_ms == 50);
 
     /* Profiles follow the captured nvpmodel requests, and use the DFLL
      * adapter/core, not the legacy two PLLX steps. */

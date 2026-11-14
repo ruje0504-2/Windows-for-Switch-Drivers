@@ -7,6 +7,7 @@
 #include <vhf.h>
 #include "sensor_status.h"
 #include "sio_protocol.h"
+#include "../../common/display_idle.h"
 
 enum { Data = 0, Ier, Fifo, Lcr, Mcr, Lsr, Msr, Scratch, Irda };
 enum { RxCapacity = 1024, PollMs = 8, ResponseMs = 300 };
@@ -68,6 +69,7 @@ typedef struct {
     SIO_POINTER_STATE Pointer;
     UCHAR MouseButtons;  /* last state accepted by VHF */
     ULONG ReportedState;
+    SW_DISPLAY_IDLE DisplayIdle;
 } SIO_DEVICE;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SIO_DEVICE, SioDevice)
 
@@ -400,6 +402,7 @@ static NTSTATUS Start(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Previous)
     SIO_DEVICE *D = SioDevice(Device);
     KIRQL Irql;
     UNREFERENCED_PARAMETER(Previous);
+    (VOID)SwDisplayIdleStart(&D->DisplayIdle);
     KeAcquireSpinLock(&D->TimerLock, &Irql);
     D->Running = TRUE;
     WdfTimerStart(D->Timer, WDF_REL_TIMEOUT_IN_MS(1));
@@ -432,6 +435,7 @@ static NTSTATUS Release(WDFDEVICE Device, WDFCMRESLIST Translated)
 {
     SIO_DEVICE *D = SioDevice(Device);
     UNREFERENCED_PARAMETER(Translated);
+    SwDisplayIdleStop(&D->DisplayIdle);
     if (D->Vhf) { VhfDelete(D->Vhf, TRUE); D->Vhf = NULL; }
     if (D->Home) { WdfObjectDelete(D->Home); D->Home = NULL; }
     if (D->Uart) { MmUnmapIoSpace((PVOID)D->Uart, 0x40); D->Uart = NULL; }
@@ -501,6 +505,8 @@ static NTSTATUS Add(WDFDRIVER Driver, PWDFDEVICE_INIT Init)
     if (!NT_SUCCESS(Status)) return Status;
     SIO_DEVICE *D = SioDevice(Device);
     D->Device = Device;
+    Status = SwDisplayIdleConfigure(Device, &D->DisplayIdle);
+    if (!NT_SUCCESS(Status)) return Status;
     KeInitializeSpinLock(&D->TimerLock);
     WDF_OBJECT_ATTRIBUTES_INIT(&A);
     A.ParentObject = Device;

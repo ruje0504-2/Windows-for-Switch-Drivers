@@ -22,6 +22,7 @@
 #include <wdf.h>
 #include <spb.h>
 #include <vhf.h>
+#include "../../common/display_idle.h"
 
 #define TOUCH_MAX_CONTACTS   10
 #define TOUCH_WIDTH          720      /* HID X: portrait */
@@ -116,6 +117,7 @@ typedef struct _SWTOUCH_DEVICE {
     LONG Reports;
     LONG Errors;
     LONG Held;              /* motion events swallowed by the jitter dead zone */
+    SW_DISPLAY_IDLE DisplayIdle;
 } SWTOUCH_DEVICE, *PSWTOUCH_DEVICE;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SWTOUCH_DEVICE, SwTouchGetDevice)
 
@@ -620,13 +622,19 @@ NTSTATUS SwTouchEvtSelfManagedIoInit(WDFDEVICE Device)
         SwTouchGetTimer(Dev->Timer)->Device = Device;
     }
     Status = SwTouchEvtRestart(Device);
-    if (!NT_SUCCESS(Status)) SwTouchEvtSelfManagedIoCleanup(Device);
-    return Status;
+    if (!NT_SUCCESS(Status)) {
+        SwTouchEvtSelfManagedIoCleanup(Device);
+        return Status;
+    }
+    Status = SwDisplayIdleStart(&Dev->DisplayIdle);
+    SwTouchTrace(L"DisplayIdleStatus", (ULONG)Status);
+    return STATUS_SUCCESS;
 }
 
 VOID SwTouchEvtSelfManagedIoCleanup(WDFDEVICE Device)
 {
     PSWTOUCH_DEVICE Dev = SwTouchGetDevice(Device);
+    SwDisplayIdleStop(&Dev->DisplayIdle);
     (VOID)SwTouchEvtSuspend(Device);
     Dev->VhfReady = FALSE;
     if (Dev->Vhf != NULL) {
@@ -660,6 +668,10 @@ NTSTATUS SwTouchEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
     }
     Dev = SwTouchGetDevice(Device);
     Dev->Stopping = TRUE;
+    Status = SwDisplayIdleConfigure(Device, &Dev->DisplayIdle);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
     WDF_OBJECT_ATTRIBUTES_INIT(&Attributes);
     Attributes.ParentObject = Device;
     Status = WdfWaitLockCreate(&Attributes, &Dev->Lock);
@@ -686,7 +698,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwTouchParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwTouchParamsPath);
     }
-    SwTouchTrace(L"DriverVersion", 5);
+    SwTouchTrace(L"DriverVersion", 6);
     WDF_DRIVER_CONFIG_INIT(&Config, SwTouchEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);
 }

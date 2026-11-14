@@ -53,9 +53,10 @@ typedef enum {PowerActionNone,PowerActionSleep,PowerActionHibernate,
 #define POLL_MS 2000
 #define WDF_REL_TIMEOUT_IN_MS(n) (n)
 typedef struct {
- UCHAR *Pwm,*Car,*BacklightPwm; ULONG FanOffset,Duty,DisplayState,LastTemp,BootCpuKhz,Brightness;
+ UCHAR *Pwm,*Car,*BacklightPwm; ULONG FanOffset,Duty,DisplayState,LastTemp,BootCpuKhz,Brightness,BacklightBootCsr;
  void *Sensor,*Timer,*BacklightLock,*Device;
  BOOLEAN IsLite,Stopping,BacklightReady,CpuConfigured,CpuApplied,TempValid,CpuOverclockEnabled;
+ BOOLEAN ScreenOffIdle,SensorNeedsReinit,GpuRailOn;
  struct {ULONG CpuKhz;} Config;
  ULONG Failures; LONG Runs;
 } SWFAN_DEVICE,*PSWFAN_DEVICE;
@@ -67,10 +68,12 @@ static bool cpu_locked;
 static void SwFanCpuLock(PSWFAN_DEVICE d){(void)d;assert(!cpu_locked);cpu_locked=true;}
 static void SwFanCpuUnlock(PSWFAN_DEVICE d){(void)d;assert(cpu_locked);cpu_locked=false;}
 static bool backlight_locked;static unsigned registry_writes;
+static unsigned timer_starts,last_timer_ms,sensor_inits;
 static void event(char c){assert(next<sizeof(order));order[next++]=c;}
 static void SwFanTrace(const wchar_t *n,ULONG v){assert(!backlight_locked);registry_writes++;if(!wcscmp(n,L"SleepFanOff"))sleep_off=v;}
 static void WdfWaitLockAcquire(void *l,void *t){(void)l;(void)t;assert(!backlight_locked);backlight_locked=true;}
 static void WdfWaitLockRelease(void *l){(void)l;assert(backlight_locked);backlight_locked=false;}
+static NTSTATUS SwFanConfigureSensor(void *s){(void)s;sensor_inits++;return 0;}
 static NTSTATUS SwFanReadReg(void *s,UCHAR reg,UCHAR *v){
  (void)s;assert(reg==0||reg==1);if(sensor_fail)return -1;*v=(UCHAR)temp;return 0;
 }
@@ -85,16 +88,17 @@ static void write_pwm(PULONG p,ULONG v){*p=v;event(v==(PWM_CSR_EN|PWM_ABSOLUTE_O
 #define WRITE_REGISTER_ULONG(p,v) write_pwm((p),(v))
 #define READ_REGISTER_ULONG(p) (*(p))
 static LONG InterlockedIncrement(volatile LONG *p){return ++*p;}
-static void WdfTimerStart(void *t,unsigned ms){(void)t;assert(ms==2000);}
+static void WdfTimerStart(void *t,unsigned ms){(void)t;assert(ms==2000||ms==50);timer_starts++;last_timer_ms=ms;}
 static POWER_ACTION WdfDeviceGetSystemPowerAction(void *d){(void)d;return action;}
 '''
 tests = r'''
 static ULONG pwm;
 static void init(PSWFAN_DEVICE d){
- memset(d,0,sizeof(*d));d->Pwm=(UCHAR*)&pwm;d->Device=d;
+ memset(d,0,sizeof(*d));d->Pwm=(UCHAR*)&pwm;d->Device=d;d->Timer=d;
  d->IsLite=d->BacklightReady=d->CpuConfigured=d->CpuOverclockEnabled=true;d->CpuApplied=true;
- d->Config.CpuKhz=LITE_CPU_KHZ;d->BootCpuKhz=998400;d->DisplayState=1;d->Duty=51;
+ d->Config.CpuKhz=LITE_CPU_KHZ;d->BootCpuKhz=998400;d->DisplayState=1;d->Duty=51;d->BacklightBootCsr=0x31;
  temp=32;sensor_fail=clock_fail=false;action=PowerActionNone;sleep_off=0;next=0;
+ timer_starts=last_timer_ms=sensor_inits=0;
 }
 int main(void){
  SWFAN_DEVICE d;
@@ -113,12 +117,22 @@ int main(void){
   if(i){next=0;temp=thresholds[i]-1;SwFanEvtTimer(&d);assert(d.Duty==duties[i-1]);}
  }
  init(&d);SwFanEvtTimer(&d);assert(d.Duty==51&&d.CpuApplied&&order[0]=='F'&&order[1]=='O');
- /* Drop CPU overclock before a cool screen-off session stops the fan. */
+ /* Drop CPU overclock before a cool screen-off session stops the fan and parks polling for SC7. */
  init(&d);d.DisplayState=0;SwFanEvtTimer(&d);
- assert(!d.CpuApplied&&d.Duty==0&&d.TempValid&&order[0]=='c'&&order[1]=='f');
- /* Wake must start cooling before the CPU goes back to 2 GHz. */
- d.DisplayState=1;next=0;SwFanEvtTimer(&d);
- assert(d.Duty==51&&d.CpuApplied&&order[0]=='F'&&order[1]=='O');
+ assert(!d.CpuApplied&&d.Duty==0&&d.TempValid&&d.ScreenOffIdle&&timer_starts==0&&order[0]=='c'&&order[1]=='f');
+ /* Active GPU rail keeps thermal polling alive even while screen is off. */
+ init(&d);d.DisplayState=0;d.GpuRailOn=true;SwFanEvtTimer(&d);
+ assert(!d.CpuApplied&&d.Duty==0&&!d.ScreenOffIdle&&timer_starts==1&&last_timer_ms==2000);
+ /* Display wake starts 76 cooling floor + 50 ms fast poll + TMP451 reinit before CPU goes back to overclock. */
+ init(&d);d.DisplayState=0;SwFanEvtTimer(&d);assert(d.ScreenOffIdle&&timer_starts==0);
+ ULONG state_on=1;assert(SwFanDisplayStateCallback(&SwFanDisplayStateGuid,&state_on,sizeof(state_on),&d)==0);
+ assert(!d.ScreenOffIdle&&d.SensorNeedsReinit&&d.Duty==76&&timer_starts==1&&last_timer_ms==50);
+ next=0;SwFanEvtTimer(&d);
+ assert(!d.SensorNeedsReinit&&sensor_inits==1&&d.Duty==51&&d.CpuApplied&&order[0]=='F'&&order[1]=='O');
+ /* Lost PWM_CSR_0 after SC7 recovers boot PFM divider 0x31 on display wake. */
+ ULONG lost_bl=0;d.BacklightPwm=(UCHAR*)&lost_bl;d.Brightness=150;
+ assert(SwFanDisplayStateCallback(&SwFanDisplayStateGuid,&state_on,sizeof(state_on),&d)==0);
+ assert((lost_bl&0xffff)==0x31&&((lost_bl>>16)&0x7fff)==150u);
  /* Screen off is not proof that heat production stopped. */
  init(&d);d.DisplayState=0;temp=55;SwFanEvtTimer(&d);assert(d.Duty==236&&!d.CpuApplied);
  init(&d);d.DisplayState=0;clock_fail=true;SwFanEvtTimer(&d);assert(d.Duty==51&&d.CpuApplied);

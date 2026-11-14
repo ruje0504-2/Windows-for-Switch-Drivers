@@ -120,6 +120,12 @@ static NTSTATUS Start(WDFDEVICE device, WDF_POWER_DEVICE_STATE previous)
     interval.QuadPart = -10000;
     NTSTATUS status = STATUS_IO_TIMEOUT;
     BOOLEAN sent = FALSE;
+    WdfInterruptAcquireLock(d->Interrupt);
+    /* If XUSB lost power across SC7, MailCmd loses MAIL_IRQ; do not claim a
+     * stale pre-sleep handshake is still valid. */
+    if (d->Notified && !(Read(d, MailCmd) & MAIL_IRQ))
+        d->Notified = FALSE;
+    WdfInterruptReleaseLock(d->Interrupt);
     for (unsigned i = 0; i < 250; i++) {
         WdfInterruptAcquireLock(d->Interrupt);
         ULONG owner = Read(d, MailOwner);

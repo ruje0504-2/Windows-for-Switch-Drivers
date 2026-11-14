@@ -19,6 +19,7 @@
 #include <ntstrsafe.h>
 #include <wdf.h>
 #include <spb.h>
+#include "../../common/display_idle.h"
 
 #define RTC_CONTROL      0x03
 #define RTC_UPDATE0      0x04
@@ -39,6 +40,7 @@ typedef struct _SWRTC_DEVICE {
     PCALLBACK_OBJECT TimeCallbackObject;
     PVOID TimeCallback;
     LONG Learns;
+    SW_DISPLAY_IDLE DisplayIdle;
 } SWRTC_DEVICE, *PSWRTC_DEVICE;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SWRTC_DEVICE, SwRtcGetDevice)
 
@@ -51,6 +53,8 @@ DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SwRtcEvtDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE SwRtcEvtPrepareHardware;
 EVT_WDF_DEVICE_SELF_MANAGED_IO_INIT SwRtcEvtSelfManagedIoInit;
+EVT_WDF_DEVICE_SELF_MANAGED_IO_SUSPEND SwRtcEvtSuspend;
+EVT_WDF_DEVICE_SELF_MANAGED_IO_RESTART SwRtcEvtRestart;
 EVT_WDF_DEVICE_SELF_MANAGED_IO_CLEANUP SwRtcEvtSelfManagedIoCleanup;
 EVT_WDF_WORKITEM SwRtcEvtLearnWork;
 CALLBACK_FUNCTION SwRtcTimeChanged;
@@ -306,11 +310,32 @@ NTSTATUS SwRtcEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
     return STATUS_DEVICE_CONFIGURATION_ERROR;
 }
 
+static VOID SwRtcRegisterCallback(PSWRTC_DEVICE Dev)
+{
+    UNICODE_STRING Name;
+    OBJECT_ATTRIBUTES Attributes;
+    NTSTATUS Status;
+
+    if (Dev->TimeCallback != NULL) {
+        return;
+    }
+    RtlInitUnicodeString(&Name, L"\\Callback\\SetSystemTime");
+    InitializeObjectAttributes(&Attributes, &Name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    Status = ExCreateCallback(&Dev->TimeCallbackObject, &Attributes, FALSE, TRUE);
+    SwRtcTrace(L"CallbackOpenStatus", (ULONG)Status);
+    if (NT_SUCCESS(Status)) {
+        Dev->TimeCallback = ExRegisterCallback(Dev->TimeCallbackObject, SwRtcTimeChanged, Dev);
+        if (Dev->TimeCallback == NULL) {
+            ObDereferenceObject(Dev->TimeCallbackObject);
+            Dev->TimeCallbackObject = NULL;
+        }
+    }
+    SwRtcTrace(L"CallbackRegistered", Dev->TimeCallback != NULL);
+}
+
 NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
-    UNICODE_STRING Name;
-    OBJECT_ATTRIBUTES Attributes;
     NTSTATUS Status;
 
     if (Dev->I2c == NULL) {
@@ -321,25 +346,13 @@ NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
         }
     }
     SwRtcRestoreTime(Dev);
-
-    if (Dev->TimeCallback == NULL) {
-        RtlInitUnicodeString(&Name, L"\\Callback\\SetSystemTime");
-        InitializeObjectAttributes(&Attributes, &Name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
-        Status = ExCreateCallback(&Dev->TimeCallbackObject, &Attributes, FALSE, TRUE);
-        SwRtcTrace(L"CallbackOpenStatus", (ULONG)Status);
-        if (NT_SUCCESS(Status)) {
-            Dev->TimeCallback = ExRegisterCallback(Dev->TimeCallbackObject, SwRtcTimeChanged, Dev);
-            if (Dev->TimeCallback == NULL) {
-                ObDereferenceObject(Dev->TimeCallbackObject);
-                Dev->TimeCallbackObject = NULL;
-            }
-        }
-        SwRtcTrace(L"CallbackRegistered", Dev->TimeCallback != NULL);
-    }
+    SwRtcRegisterCallback(Dev);
+    Status = SwDisplayIdleStart(&Dev->DisplayIdle);
+    SwRtcTrace(L"DisplayIdleStatus", (ULONG)Status);
     return STATUS_SUCCESS;
 }
 
-VOID SwRtcEvtSelfManagedIoCleanup(WDFDEVICE Device)
+NTSTATUS SwRtcEvtSuspend(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
     if (Dev->TimeCallback != NULL) {
@@ -353,6 +366,23 @@ VOID SwRtcEvtSelfManagedIoCleanup(WDFDEVICE Device)
     if (Dev->LearnWork != NULL) {
         WdfWorkItemFlush(Dev->LearnWork);
     }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS SwRtcEvtRestart(WDFDEVICE Device)
+{
+    PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
+    /* Resynchronize system wall-clock across SC7 while SetSystemTime callback is still detached. */
+    SwRtcRestoreTime(Dev);
+    SwRtcRegisterCallback(Dev);
+    return STATUS_SUCCESS;
+}
+
+VOID SwRtcEvtSelfManagedIoCleanup(WDFDEVICE Device)
+{
+    PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
+    SwDisplayIdleStop(&Dev->DisplayIdle);
+    (VOID)SwRtcEvtSuspend(Device);
     if (Dev->I2c != NULL) {
         WdfIoTargetClose(Dev->I2c);
         WdfObjectDelete(Dev->I2c);
@@ -372,10 +402,16 @@ NTSTATUS SwRtcEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&Pnp);
     Pnp.EvtDevicePrepareHardware = SwRtcEvtPrepareHardware;
     Pnp.EvtDeviceSelfManagedIoInit = SwRtcEvtSelfManagedIoInit;
+    Pnp.EvtDeviceSelfManagedIoSuspend = SwRtcEvtSuspend;
+    Pnp.EvtDeviceSelfManagedIoRestart = SwRtcEvtRestart;
     Pnp.EvtDeviceSelfManagedIoCleanup = SwRtcEvtSelfManagedIoCleanup;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &Pnp);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&Attributes, SWRTC_DEVICE);
     Status = WdfDeviceCreate(&DeviceInit, &Attributes, &Device);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
+    Status = SwDisplayIdleConfigure(Device, &SwRtcGetDevice(Device)->DisplayIdle);
     if (!NT_SUCCESS(Status)) {
         return Status;
     }
@@ -400,7 +436,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwRtcParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwRtcParamsPath);
     }
-    SwRtcTrace(L"DriverVersion", 2);
+    SwRtcTrace(L"DriverVersion", 3);
     WDF_DRIVER_CONFIG_INIT(&Config, SwRtcEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);
 }

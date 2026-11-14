@@ -23,6 +23,7 @@ harness = r'''
 #include <string.h>
 #include <wchar.h>
 typedef uint8_t UCHAR;
+typedef uint8_t BOOLEAN;
 typedef uint32_t ULONG;
 typedef int32_t NTSTATUS;
 #define NT_SUCCESS(s) ((s) >= 0)
@@ -33,14 +34,16 @@ typedef int32_t NTSTATUS;
 #define IO_ERROR ((NTSTATUS)0xc0000185)
 #define MAXULONG UINT32_MAX
 #define FALSE 0
+#define TRUE 1
+#define SWBAT_CHARGE_LIMIT_OFF 0
 #define POLL_MS 10000
 #define USBC_POLL_MS 500
 #define WDF_REL_TIMEOUT_IN_MS(x) (x)
 #define VOID void
-struct device { void *Charger, *Pd, *Timer, *UsbcTimer; unsigned Lock, Stopping, PdConfigured; };
+struct device { void *Charger, *Pd, *Timer, *UsbcTimer; unsigned Lock, Stopping, PdConfigured, ChargeLimit; };
 typedef struct device *PSWBAT_DEVICE, *WDFDEVICE;
 static uint8_t regs[256], before[256];
-static unsigned ops, writes, fail_at, corrupt, timers, pd_calls;
+static unsigned ops, writes, fail_at, corrupt, timers, pd_calls, limit_refreshes;
 static uint32_t trace_before, trace_after, trace_status;
 static void SwBatTrace(const wchar_t *n, ULONG v) {
     if (!wcscmp(n,L"ChargeTimerBefore")) trace_before=v;
@@ -65,10 +68,11 @@ static void WdfWaitLockRelease(unsigned lock){assert(lock==1);}
 static void WdfTimerStart(void *t,unsigned ms){assert(t && ms);++timers;}
 static NTSTATUS SwBatConfigurePd(WDFDEVICE d,PSWBAT_DEVICE p){assert(d==p);++pd_calls;return 0;}
 static void SwBatUsbcStart(PSWBAT_DEVICE d){assert(d->Pd && (regs[5]&0xbe)==0x8a);}
+static NTSTATUS SwBatRefreshChargeLimit(PSWBAT_DEVICE d){assert(d->Charger);++limit_refreshes;return 0;}
 static void reset(unsigned timer) {
     memset(regs,0x55,sizeof(regs));regs[10]=0x2f;regs[2]=0x48;regs[5]=timer;
     memcpy(before,regs,sizeof(regs));
-    ops=writes=fail_at=corrupt=timers=pd_calls=0;
+    ops=writes=fail_at=corrupt=timers=pd_calls=limit_refreshes=0;
     trace_before=trace_after=trace_status=UINT32_MAX;
 }
 '''
@@ -101,10 +105,13 @@ int main(void) {
     assert(SwBatConfigureChargePolicy(&d)==STATUS_DEVICE_NOT_READY && !ops);
     d.Charger=&d;
     reset(2);assert(SwBatEvtSelfManagedIoRestart(&d)==0);
-    assert(regs[5]==0x8a && !d.Stopping && timers==1 && !pd_calls);
+    assert(regs[5]==0x8a && !d.Stopping && timers==1 && !pd_calls && !limit_refreshes);
+    d.ChargeLimit=85;
+    reset(2);assert(SwBatEvtSelfManagedIoRestart(&d)==0);
+    assert(regs[5]==0x8a && !d.Stopping && timers==1 && !pd_calls && limit_refreshes==1);
     reset(2);d.Pd=d.UsbcTimer=&d;
     assert(SwBatEvtSelfManagedIoRestart(&d)==0);
-    assert(regs[5]==0x8a && timers==2 && pd_calls==1 && d.PdConfigured);
+    assert(regs[5]==0x8a && timers==2 && pd_calls==1 && d.PdConfigured && !limit_refreshes);
     puts("Battery charge policy: bounded REG05 writes, preserved limits, I2C errors and PD-independent restart passed");
 }
 '''

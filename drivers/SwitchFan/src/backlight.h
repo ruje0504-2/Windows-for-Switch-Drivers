@@ -24,4 +24,11 @@ static ULONG SwBacklightCsr(ULONG Current, ULONG Duty)
     return (Current & ~0x7FFF0000u) | 0x80000000u | (Duty << 16);
 }
 
+static ULONG SwBacklightCsrWithFallback(ULONG Current, ULONG BootCsr, ULONG Duty)
+{
+    if ((Current & 0x1FFFu) == 0 && (BootCsr & 0x1FFFu) != 0)
+        Current = (Current & ~0x1FFFu) | (BootCsr & 0x1FFFu);
+    return SwBacklightCsr(Current, Duty);
+}
+
 #endif

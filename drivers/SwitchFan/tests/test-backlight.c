@@ -17,5 +17,8 @@ int main(void)
     assert(SwBacklightCsr(0x80FF0003u, 0) == 0x80000003u);
     assert(SwBacklightCsr(0x80000003u, 150) == 0x80960003u);
     assert(SwBacklightCsr(0x00001234u, 255) == 0x80FF1234u);
+    /* Recover the boot PFM divider if PWM_CSR_0 lost state across SC7. */
+    assert(SwBacklightCsrWithFallback(0x00000000u, 0x80960003u, 150) == 0x80960003u);
+    assert(SwBacklightCsrWithFallback(0x80000005u, 0x80960003u, 150) == 0x80960005u);
     return 0;
 }

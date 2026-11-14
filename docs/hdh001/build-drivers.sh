@@ -1,5 +1,6 @@
 #!/bin/sh
-# ARM64 cross-build against KMDF 1.15. Pass the WindowsDrivers tree and an output directory.
+# ARM64 cross-build against KMDF 1.15 (plus optional pure-WDM Tegra214Power when BUILD_T214_PEP=1).
+# Pass the WindowsDrivers tree and an output directory.
 set -eu
 src=${1:?WindowsDrivers source directory}
 out=${2:?output directory}
@@ -10,11 +11,17 @@ out=${2:?output directory}
 sdk=${SDK_INCLUDE:-$WDK_INCLUDE}
 extra=${WDK_EXTRA_LIB:-$WDK_LIB}
 cc=${CLANG_CL:-clang-cl}; ld=${LLD_LINK:-lld-link}
-for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:switchtouch SwitchPowerButton:switchpwrbtn SwitchFan:switchfan SwitchBattery:switchbattery SwitchRtc:switchrtc SwitchBluetooth:switchbt SwitchSensor:switchsio TegraXusb:tegraxusb; do
+for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:switchtouch SwitchPowerButton:switchpwrbtn SwitchFan:switchfan SwitchBattery:switchbattery SwitchRtc:switchrtc SwitchBluetooth:switchbt SwitchSensor:switchsio TegraXusb:tegraxusb Tegra214Power:tegra214pep; do
     dir=${pair%:*}; name=${pair#*:}; dest="$out/$name"
+    if [ "$dir" = Tegra214Power ] && [ "${BUILD_T214_PEP:-0}" != 1 ]; then
+        continue
+    fi
     driver_dir="$src/drivers/$dir"
     mkdir -p "$dest"
     for file in "$driver_dir/src/$name.c" "$src/tools/kmdf_support.c"; do
+        if [ "$dir" = Tegra214Power ] && [ "$file" = "$src/tools/kmdf_support.c" ]; then
+            continue
+        fi
         obj=${file##*/}; obj=${obj%.c}.obj
         extra_defs=""
         extra_include=""
@@ -35,13 +42,19 @@ for pair in Tegra210Gpio:tegra210gpio Tegra210I2c:tegra210i2c SwitchLiteTouch:sw
     case "$dir" in
         Tegra210Gpio) set -- "$extra/msgpioclxstub.lib" ;;
         Tegra210I2c)  set -- "$extra/spb/1.0/spbcxstubs.lib" ;;
-        SwitchFan|SwitchRtc|SwitchBluetooth|TegraXusb) set -- ;;
+        SwitchFan|SwitchRtc|SwitchBluetooth|TegraXusb|Tegra214Power) set -- ;;
         SwitchBattery) set -- "$extra/battc.lib" ;;
         SwitchLiteTouch|SwitchPowerButton|SwitchSensor)  set -- "$extra/vhfkm.lib" "$extra/libcntpr.lib" ;;
     esac
-    "$ld" /nologo /driver /subsystem:native,10.0 /machine:arm64 /entry:FxDriverEntry /nodefaultlib \
+    entry=FxDriverEntry
+    if [ "$dir" = Tegra214Power ]; then
+        entry=DriverEntry
+    else
+        set -- "$dest/kmdf_support.obj" "$WDF_LIB/wdfdriverentry.lib" "$WDF_LIB/wdfldr.lib" "$@"
+    fi
+    "$ld" /nologo /driver /subsystem:native,10.0 /machine:arm64 "/entry:$entry" /nodefaultlib \
         /release /opt:ref /opt:icf /tsaware:no /section:.text,ERP /section:.rdata,RP /section:.data,RWP \
         /section:.pdata,RP /section:INIT,ERD /timestamp:0 "/out:$dest/$name.sys" "/map:$dest/$name.map" \
-        "$dest/$name.obj" "$dest/kmdf_support.obj" "$WDF_LIB/wdfdriverentry.lib" "$WDF_LIB/wdfldr.lib" \
+        "$dest/$name.obj" \
         "$WDK_LIB/ntoskrnl.lib" "$WDK_LIB/hal.lib" "$WDK_LIB/ntstrsafe.lib" "$extra/bufferoverflowfastfailk.lib" "$@"
 done

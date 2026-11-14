@@ -38,6 +38,7 @@
 #include <batclass.h>
 #include <spb.h>
 #include "usb_pd.h"
+#include "../../common/display_idle.h"
 
 #define GAUGE_REPSOC   0x06
 #define GAUGE_TEMP     0x08
@@ -124,6 +125,7 @@ typedef struct _SWBAT_DEVICE {
     BOOLEAN ChargeLimitInitialized;
     BOOLEAN SuspendChargeDisabled;
     NTSTATUS LastLimitStatus;
+    SW_DISPLAY_IDLE DisplayIdle;
 } SWBAT_DEVICE, *PSWBAT_DEVICE;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SWBAT_DEVICE, SwBatGetDevice)
 
@@ -726,7 +728,7 @@ NTSTATUS SwBatQueryInformation(PVOID Context, ULONG BatteryTag, BATTERY_QUERY_IN
         ULONG Kelvin10;
         NTSTATUS Status;
         WdfWaitLockAcquire(Dev->Lock, NULL);
-        Status = SwBatRead16(Dev->Gauge, GAUGE_TEMP, &Raw);
+        Status = Dev->Stopping ? STATUS_DEVICE_NOT_READY : SwBatRead16(Dev->Gauge, GAUGE_TEMP, &Raw);
         WdfWaitLockRelease(Dev->Lock);
         if (!NT_SUCCESS(Status)) {
             return Status;
@@ -772,6 +774,11 @@ NTSTATUS SwBatQueryStatus(PVOID Context, ULONG BatteryTag, PBATTERY_STATUS Batte
         return STATUS_NO_SUCH_DEVICE;
     }
     WdfWaitLockAcquire(Dev->Lock, NULL);
+    if (Dev->Stopping) {
+        *BatteryStatus = Dev->Last;
+        WdfWaitLockRelease(Dev->Lock);
+        return STATUS_SUCCESS;
+    }
     Status = SwBatReadStatus(Dev, BatteryStatus);
     if (NT_SUCCESS(Status)) {
         Dev->Last = *BatteryStatus;
@@ -954,27 +961,34 @@ NTSTATUS SwBatEvtSelfManagedIoInit(WDFDEVICE Device)
             }
         }
     }
+    Status = SwDisplayIdleStart(&Dev->DisplayIdle);
+    SwBatTrace(L"DisplayIdleStatus", (ULONG)Status);
     return SwBatEvtSelfManagedIoRestart(Device);
 }
 
 NTSTATUS SwBatEvtSelfManagedIoRestart(WDFDEVICE Device)
 {
     PSWBAT_DEVICE Dev = SwBatGetDevice(Device);
+    BOOLEAN RefreshedLimit = FALSE;
     WdfWaitLockAcquire(Dev->Lock, NULL);
     /* Keep gauge reporting available if the optional charger is inaccessible;
      * ChargePolicyStatus records the failure instead of claiming it applied.
      */
     (VOID)SwBatConfigureChargePolicy(Dev);
     Dev->Stopping = FALSE;
-    if (Dev->Timer != NULL) WdfTimerStart(Dev->Timer, WDF_REL_TIMEOUT_IN_MS(POLL_MS));
+    if (Dev->Timer != NULL) WdfTimerStart(Dev->Timer, WDF_REL_TIMEOUT_IN_MS(500));
     if (Dev->Pd != NULL && Dev->UsbcTimer != NULL) {
         NTSTATUS Status = SwBatConfigurePd(Device, Dev);
         Dev->PdConfigured = NT_SUCCESS(Status);
         SwBatTrace(L"UsbcSetupStatus", (ULONG)Status);
         if (Dev->PdConfigured) {
             SwBatUsbcStart(Dev);
+            RefreshedLimit = TRUE;
             WdfTimerStart(Dev->UsbcTimer, WDF_REL_TIMEOUT_IN_MS(USBC_POLL_MS));
         }
+    }
+    if (!RefreshedLimit && Dev->ChargeLimit != SWBAT_CHARGE_LIMIT_OFF) {
+        (VOID)SwBatRefreshChargeLimit(Dev);
     }
     WdfWaitLockRelease(Dev->Lock);
     return STATUS_SUCCESS;
@@ -1011,6 +1025,8 @@ NTSTATUS SwBatEvtSelfManagedIoSuspend(WDFDEVICE Device)
 VOID SwBatEvtSelfManagedIoCleanup(WDFDEVICE Device)
 {
     PSWBAT_DEVICE Dev = SwBatGetDevice(Device);
+    SwDisplayIdleStop(&Dev->DisplayIdle);
+    (VOID)SwBatEvtSelfManagedIoSuspend(Device);
     WdfWaitLockAcquire(Dev->ClassLock, NULL);
     if (Dev->ClassHandle != NULL) {
         (VOID)BatteryClassUnload(Dev->ClassHandle);
@@ -1024,7 +1040,17 @@ VOID SwBatEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputBu
     WDFDEVICE Device = WdfIoQueueGetDevice(Queue);
     PSWBAT_DEVICE Dev = SwBatGetDevice(Device);
     ULONG_PTR Bytes = 0;
+    BOOLEAN PowerHeld = FALSE;
     NTSTATUS Status;
+
+    if (IoControlCode == IOCTL_SWBAT_GET_CHARGE_LIMIT || IoControlCode == IOCTL_SWBAT_SET_CHARGE_LIMIT) {
+        Status = WdfDeviceStopIdle(Device, TRUE);
+        if (!NT_SUCCESS(Status)) {
+            WdfRequestCompleteWithInformation(Request, Status, 0);
+            return;
+        }
+        PowerHeld = TRUE;
+    }
 
     switch (IoControlCode) {
     case IOCTL_SWBAT_GET_CHARGE_LIMIT: {
@@ -1082,6 +1108,9 @@ VOID SwBatEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputBu
         Status = STATUS_INVALID_DEVICE_REQUEST;
         break;
     }
+    if (PowerHeld) {
+        WdfDeviceResumeIdle(Device);
+    }
     WdfRequestCompleteWithInformation(Request, Status, Bytes);
 }
 
@@ -1138,6 +1167,10 @@ NTSTATUS SwBatEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
         return Status;
     }
     Dev = SwBatGetDevice(Device);
+    Status = SwDisplayIdleConfigureTimeout(Device, &Dev->DisplayIdle, 2000);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
     WDF_OBJECT_ATTRIBUTES_INIT(&Attributes);
     Attributes.ParentObject = Device;
     Status = WdfWaitLockCreate(&Attributes, &Dev->Lock);
@@ -1171,7 +1204,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwBatParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwBatParamsPath);
     }
-    SwBatTrace(L"DriverVersion", 12);
+    SwBatTrace(L"DriverVersion", 13);
 
     WDF_DRIVER_CONFIG_INIT(&Config, SwBatEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);

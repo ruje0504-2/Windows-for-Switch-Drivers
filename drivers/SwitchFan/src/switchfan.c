@@ -44,6 +44,7 @@ typedef struct _SWFAN_DEVICE {
     BOOLEAN IsLite;
     volatile UCHAR *BacklightPwm;
     ULONG BacklightLength;  /* zero when this aliases the Erista PWM map */
+    ULONG BacklightBootCsr;
     BOOLEAN BacklightReady;
     WDFWAITLOCK BacklightLock;
     PVOID DisplayCallback;
@@ -58,7 +59,8 @@ typedef struct _SWFAN_DEVICE {
     ULONG BootPllx, BootCpuKhz;
     UCHAR BootVout;
     BOOLEAN CpuConfigured, CpuApplied, CpuThrottled, CpuOverclockEnabled;
-    BOOLEAN BaseCpuOverclockEnabled, GpuBridgeSeen;
+    BOOLEAN BaseCpuOverclockEnabled, GpuBridgeSeen, GpuRailOn;
+    BOOLEAN ScreenOffIdle, SensorNeedsReinit;
     ULONG PowerMode, PolicySeq;
     volatile LONG GpuDvfsPolicy;
     ULONG GpuReportedKhz, GpuReportedUv, GpuStatusWord;
@@ -268,6 +270,10 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
                     NT_SUCCESS(ClockStatus) && SwCpuKhz(Dev) == Dev->BootCpuKhz;
     SwFanCpuUnlock(Dev);
     SwFanTrace(L"ScreenOffCooling", ScreenOff);
+    if (Dev->SensorNeedsReinit && Dev->IsLite) {
+        (VOID)SwFanConfigureSensor(Dev->Sensor);
+        Dev->SensorNeedsReinit = FALSE;
+    }
     Status = SwFanReadReg(Dev->Sensor, TMP451_REMOTE, &Remote);
     if (NT_SUCCESS(Status)) {
         Status = SwFanReadReg(Dev->Sensor, TMP451_LOCAL, &Local);
@@ -310,9 +316,19 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
     if (Dev->Car != NULL) SwFanTrace(L"CpuActualKhz", SwCpuKhz(Dev));
     SwFanCpuUnlock(Dev);
     SwFanTrace(L"Runs", (ULONG)InterlockedIncrement(&Dev->Runs));
+    WdfWaitLockAcquire(Dev->BacklightLock, NULL);
     if (!Dev->Stopping) {
-        WdfTimerStart(Timer, WDF_REL_TIMEOUT_IN_MS(POLL_MS));    /* one-shot passive timer, re-armed */
+        if (Dev->IsLite && Dev->BacklightReady && Dev->DisplayState == 0 &&
+            (Dev->Config.CpuKhz != LITE_CPU_KHZ || ClockRestored) &&
+            Dev->TempValid && Dev->Duty == 0 && !Dev->GpuRailOn) {
+            Dev->ScreenOffIdle = TRUE;
+        } else {
+            Dev->ScreenOffIdle = FALSE;
+            WdfTimerStart(Timer, WDF_REL_TIMEOUT_IN_MS(POLL_MS));    /* one-shot passive timer, re-armed */
+        }
     }
+    WdfWaitLockRelease(Dev->BacklightLock);
+    SwFanTrace(L"ScreenOffIdle", Dev->ScreenOffIdle);
 }
 
 /* ------------------------------------------------------------- backlight */
@@ -342,7 +358,7 @@ static ULONG SwFanApplyBacklight(PSWFAN_DEVICE Dev)
     ULONG Duty = SwBacklightDuty(Dev->Brightness, Dev->DisplayState);
     if (Dev->BacklightPwm != NULL) {
         PULONG Csr = (PULONG)(Dev->BacklightPwm + PWM_CSR_0);
-        WRITE_REGISTER_ULONG(Csr, SwBacklightCsr(READ_REGISTER_ULONG(Csr), Duty));
+        WRITE_REGISTER_ULONG(Csr, SwBacklightCsrWithFallback(READ_REGISTER_ULONG(Csr), Dev->BacklightBootCsr, Duty));
     }
     return Duty;
 }
@@ -356,6 +372,16 @@ NTSTATUS SwFanDisplayStateCallback(LPCGUID Setting, PVOID Value, ULONG Length, P
         /* Power notification must not wait for registry/storage I/O. The
            existing temperature timer records this snapshot after the lock. */
         (VOID)SwFanApplyBacklight(Dev);
+        if (Dev->DisplayState != 0) {
+            Dev->SensorNeedsReinit = TRUE;
+            if (Dev->ScreenOffIdle && !Dev->Stopping && Dev->Timer != NULL) {
+                Dev->ScreenOffIdle = FALSE;
+                if (Dev->IsLite && Dev->Pwm != NULL && Dev->Duty == 0) {
+                    SwFanSetDuty(Dev, 76);
+                }
+                WdfTimerStart(Dev->Timer, WDF_REL_TIMEOUT_IN_MS(50));
+            }
+        }
         WdfWaitLockRelease(Dev->BacklightLock);
     }
     return STATUS_SUCCESS;
@@ -624,6 +650,9 @@ static VOID SwFanStartBacklight(WDFDEVICE Device)
     if (Dev->BacklightPwm == NULL || Dev->BacklightReady) return;
     WdfWaitLockAcquire(Dev->BacklightLock, NULL);
     BootCsr = READ_REGISTER_ULONG((PULONG)(Dev->BacklightPwm + PWM_CSR_0));
+    if (Dev->BacklightBootCsr == 0 && (BootCsr & 0x1FFFu) != 0) {
+        Dev->BacklightBootCsr = BootCsr;
+    }
     DefaultLevel = Dev->IsLite ? ((BootCsr >> 16) & 0x7FFF) : BACKLIGHT_MAX;
     if (DefaultLevel < BACKLIGHT_MIN || DefaultLevel > BACKLIGHT_MAX) DefaultLevel = 150;
     Dev->Brightness = SwFanReadParam(L"Brightness", DefaultLevel);
@@ -696,6 +725,11 @@ NTSTATUS SwFanEvtRestart(WDFDEVICE Device)
     PSWFAN_DEVICE Dev = SwFanGetDevice(Device);
     NTSTATUS Status = Dev->IsLite ? SwFanConfigureSensor(Dev->Sensor) : STATUS_SUCCESS;
     SwFanStartBacklight(Device);
+    if (Dev->BacklightReady) {
+        WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+        (VOID)SwFanApplyBacklight(Dev);
+        WdfWaitLockRelease(Dev->BacklightLock);
+    }
     SwFanTrace(L"ConfigureSensorStatus", (ULONG)Status);
     if (!NT_SUCCESS(Status)) {
         SwFanSetDuty(Dev, FAILSAFE_DUTY);
@@ -703,6 +737,8 @@ NTSTATUS SwFanEvtRestart(WDFDEVICE Device)
     }
     if (Dev->IsLite) SwCpuPrepare(Device);
     Dev->Stopping = FALSE;
+    Dev->ScreenOffIdle = FALSE;
+    Dev->SensorNeedsReinit = FALSE;
     Dev->Failures = 0;
     WdfTimerStart(Dev->Timer, WDF_REL_TIMEOUT_IN_MS(500));
     return STATUS_SUCCESS;
