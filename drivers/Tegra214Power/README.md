@@ -24,6 +24,27 @@ python3 drivers/Tegra214Power/tests/test-processor.py
 python3 drivers/Tegra214Power/tests/test-notifications.py
 ```
 
+## Integration review (2026-11-14)
+
+The source is integrated with the reviewed CPU DFLL/DVFS base. Local ARM64
+compilation and ASan/UBSan notification/state-machine controls pass; no native
+SC7 entry/wake, power-consumption or long-duration sleep result is claimed.
+`EnableSc7` remains zero. C7/CC6 and peripheral screen-off changes still require
+native regression checks when these experimental drivers are installed.
+
+The review fixes two admission/reporting errors: registrations with more than
+eight components veto SC7 instead of discarding untracked components; the
+crash-dump callback returns success only for a registered, completed D0 device
+with no PoFx components. At HIGH_LEVEL it cannot use the ordinary WDF/I2C power
+path. D3/component power restoration for dump capture remains unimplemented.
+See Microsoft's [dump callback contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/pep_x/nc-pep_x-pepcallbackpoweroncrashdumpdevice)
+(updated 2024-02-22; checked against WDK 10.0.26100.0).
+
+Compatible BPMP/warmboot provisioning and reserved carveouts, full GPU/display
+and DSI/panel resume, and complete XUSB Falcon recovery are prerequisites for
+native SC7 acceptance. An address preflight or mocked PSCI return does not
+establish that these hardware paths work.
+
 ## Provenance & License
 
 - License: `MIT` (`SPDX-License-Identifier: MIT`).

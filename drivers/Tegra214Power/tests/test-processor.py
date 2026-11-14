@@ -278,8 +278,8 @@ static PEPHANDLE reg_dev(PCWSTR path, POHANDLE kh, ULONG comp_count, const ULONG
     PEP_PREPARE_DEVICE prep = { &id, FALSE };
     assert(registered_pep.AcceptDeviceNotification(PEP_DPM_PREPARE_DEVICE, &prep) && prep.DeviceAccepted);
 
-    PEP_COMPONENT_V2 comps_storage[4] = {0};
-    struct { ULONG ComponentCount; PPEP_COMPONENT_V2 Components[4]; } reg_storage = { comp_count, {0} };
+    PEP_COMPONENT_V2 comps_storage[9] = {0};
+    struct { ULONG ComponentCount; PPEP_COMPONENT_V2 Components[9]; } reg_storage = { comp_count, {0} };
     for (ULONG i = 0; i < comp_count; ++i) {
         comps_storage[i].IdleStateCount = idle_counts[i];
         reg_storage.Components[i] = &comps_storage[i];
@@ -400,10 +400,22 @@ int main(void) {
     PEP_REGISTER_CRASHDUMP_DEVICE cd = { sdm1, NULL };
     assert(registered_pep.AcceptDeviceNotification(PEP_DPM_REGISTER_CRASHDUMP_DEVICE, &cd) && cd.PowerOnDumpDeviceCallback != NULL);
     PEP_CRASHDUMP_INFORMATION cd_info = { sdm1, NULL };
+    assert(cd.PowerOnDumpDeviceCallback(&cd_info) == FALSE); /* registration is not D0 completion */
+    set_dstate(sdm1, PowerDeviceD0, FALSE);
+    assert(cd.PowerOnDumpDeviceCallback(&cd_info) == FALSE);
+    set_dstate(sdm1, PowerDeviceD0, TRUE);
     assert(cd.PowerOnDumpDeviceCallback(&cd_info) == TRUE);
+    set_dstate(sdm1, PowerDeviceD3, FALSE);
+    assert(cd.PowerOnDumpDeviceCallback(&cd_info) == FALSE);
+    PEP_CRASHDUMP_INFORMATION unknown_dump = { NULL, NULL };
+    assert(cd.PowerOnDumpDeviceCallback(&unknown_dump) == FALSE);
+    PEP_CRASHDUMP_INFORMATION component_dump = { gpu0, NULL };
+    set_dstate(gpu0, PowerDeviceD0, TRUE);
+    assert(cd.PowerOnDumpDeviceCallback(&component_dump) == FALSE);
 
     /* Transition all 5 required + GPU0 to D3 (in-progress Complete=FALSE must NOT clear blocking!). */
     set_dstate(sdm1, PowerDeviceD3, TRUE);
+    assert(cd.PowerOnDumpDeviceCallback(&cd_info) == FALSE);
     set_dstate(pwrb, PowerDeviceD3, TRUE);
     set_dstate(i2c1, PowerDeviceD3, TRUE);
     set_dstate(i2c3, PowerDeviceD3, TRUE);
@@ -416,6 +428,15 @@ int main(void) {
 
     PEP_NOTIFY_COMPONENT_IDLE_STATE comp_idle = { gpu0, 1, 2, TRUE, FALSE };
     assert(registered_pep.AcceptDeviceNotification(PEP_DPM_NOTIFY_COMPONENT_IDLE_STATE, &comp_idle) && comp_idle.Completed);
+    assert(ComputeSc7BlockingMask() == 0u);
+
+    /* A ninth component cannot be silently discarded when admitting SC7. */
+    ULONG many_idle_counts[9] = {1,1,1,1,1,1,1,1,2};
+    PEPHANDLE tch0 = reg_dev(L"\\_SB.TCH0", (POHANDLE)0x9000, 9, many_idle_counts);
+    set_dstate(tch0, PowerDeviceD3, TRUE);
+    assert(ComputeSc7BlockingMask() == (1u << 6));
+    PEP_UNREGISTER_DEVICE unreg_tch0 = { tch0 };
+    assert(registered_pep.AcceptDeviceNotification(PEP_DPM_UNREGISTER_DEVICE, &unreg_tch0));
     assert(ComputeSc7BlockingMask() == 0u);
 
     /* 6. Repeated SC7 cycles emit extended PSCI ID 0x4000001B! */

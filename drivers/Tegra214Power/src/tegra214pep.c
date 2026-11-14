@@ -71,6 +71,7 @@ typedef struct _T214_PERIPHERAL {
     volatile LONG Registered;
     volatile LONG Started;
     volatile LONG PowerState;
+    volatile LONG DumpPowerReady;
     ULONG ComponentCount;
     ULONG ComponentIdleCount[MAX_COMP_TRACKED];
     volatile LONG ComponentFState[MAX_COMP_TRACKED];
@@ -78,16 +79,16 @@ typedef struct _T214_PERIPHERAL {
 
 static T214_CPU Cpus[CPU_COUNT];
 static T214_PERIPHERAL Peripherals[] = {
-    {T214HandlePeripheral, 0u, L"\\_SB.SDM1", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 1u, L"\\_SB.PWRB", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 2u, L"\\_SB.I2C1", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 3u, L"\\_SB.I2C3", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 4u, L"\\_SB.I2C5", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 5u, L"\\_SB.GPU0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 6u, L"\\_SB.TCH0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 7u, L"\\_SB.SIO0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 8u, L"\\_SB.BAT0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}},
-    {T214HandlePeripheral, 9u, L"\\_SB.RTC0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, {0}, {0}}
+    {T214HandlePeripheral, 0u, L"\\_SB.SDM1", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 1u, L"\\_SB.PWRB", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 2u, L"\\_SB.I2C1", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 3u, L"\\_SB.I2C3", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 4u, L"\\_SB.I2C5", {0}, TRUE,  NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 5u, L"\\_SB.GPU0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 6u, L"\\_SB.TCH0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 7u, L"\\_SB.SIO0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 8u, L"\\_SB.BAT0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}},
+    {T214HandlePeripheral, 9u, L"\\_SB.RTC0", {0}, FALSE, NULL, 0, 0, PowerDeviceUnspecified, 0, 0, {0}, {0}}
 };
 #define PERIPHERAL_COUNT RTL_NUMBER_OF(Peripherals)
 
@@ -249,7 +250,7 @@ static ULONG ComputeSc7BlockingMask(VOID)
             }
             continue;
         }
-        if (dstate < (LONG)PowerDeviceD3) {
+        if (dstate != (LONG)PowerDeviceD3 || p->ComponentCount > MAX_COMP_TRACKED) {
             mask |= (1u << p->BitIndex);
             continue;
         }
@@ -272,8 +273,13 @@ static BOOLEAN PeripheralsReadyForSc7(VOID)
 
 BOOLEAN PowerOnCrashdumpDevice(PPEP_CRASHDUMP_INFORMATION CrashdumpInformation)
 {
-    UNREFERENCED_PARAMETER(CrashdumpInformation);
-    return TRUE;
+    T214_PERIPHERAL *dev = PeripheralHandle(CrashdumpInformation->DeviceHandle);
+    /* HIGH_LEVEL, interrupts disabled: the normal WDF/I2C power-on path is
+     * unavailable.  Only acknowledge an already completed D0 with no PoFx
+     * components. D3/component recovery needs a separate dump-safe path. */
+    return dev != NULL && dev->ComponentCount == 0u &&
+           InterlockedCompareExchange(&dev->Registered, 0, 0) &&
+           InterlockedCompareExchange(&dev->DumpPowerReady, 0, 0);
 }
 
 static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
@@ -306,16 +312,14 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
             if (a->Register != NULL) {
                 PPEP_COMPONENT_V2 *comps = &a->Register->Components[0];
                 count = a->Register->ComponentCount;
-                if (count > MAX_COMP_TRACKED) {
-                    count = MAX_COMP_TRACKED;
-                }
-                for (c = 0; c < count; c++) {
+                for (c = 0; c < count && c < MAX_COMP_TRACKED; c++) {
                     PPEP_COMPONENT_V2 comp = comps[c];
                     dev->ComponentIdleCount[c] = comp != NULL ? comp->IdleStateCount : 1u;
                     InterlockedExchange(&dev->ComponentFState[c], 0);
                 }
             }
             dev->ComponentCount = count;
+            InterlockedExchange(&dev->DumpPowerReady, 0);
             InterlockedExchange(&dev->Started, 0);
             InterlockedExchange(&dev->PowerState, PowerDeviceD0);
             InterlockedExchange(&dev->Registered, 1);
@@ -337,6 +341,7 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         if (dev) {
             ULONG c;
             InterlockedExchange(&dev->Registered, 0);
+            InterlockedExchange(&dev->DumpPowerReady, 0);
             InterlockedExchange(&dev->Started, 0);
             InterlockedExchange(&dev->PowerState, PowerDeviceUnspecified);
             dev->Kernel = NULL;
@@ -366,6 +371,8 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         if (!dev) {
             return FALSE;
         }
+        InterlockedExchange(&dev->DumpPowerReady,
+                            a->PowerState == PowerDeviceD0 && a->Complete);
         if (a->PowerState == PowerDeviceD0) {
             /* Mark active as soon as D0 entry begins so SC7 cannot race a waking device. */
             InterlockedExchange(&dev->PowerState, PowerDeviceD0);
@@ -450,6 +457,9 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         return TRUE;
     case PEP_DPM_REGISTER_CRASHDUMP_DEVICE: {
         PPEP_REGISTER_CRASHDUMP_DEVICE a = Data;
+        if (PeripheralHandle(a->DeviceHandle) == NULL) {
+            return FALSE;
+        }
         a->PowerOnDumpDeviceCallback = PowerOnCrashdumpDevice;
         return TRUE;
     }
