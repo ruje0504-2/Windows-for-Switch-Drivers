@@ -1,0 +1,1323 @@
+{
+  "component": "Tegra210Gpio 1.0.0.5 / TegraGpioQueryActiveInterrupts",
+  "platform": "Switch Lite HDH-001, Windows ARM64, Handheld on external power",
+  "accepted_utc": "2026-11-18T21:03:54.5653781Z",
+  "change": "Use the enabled mask provided by GpioClx to select 8-pin ports. Read the GPIO interrupt-enable register only for a port with a requested pending status bit. Retain the hardware interrupt-enable check and return a 32-pin active mask.",
+  "source": {
+    "reference": "ca60e5d8112bb5883292c12af525f21ae72c1b2e",
+    "file": "drivers/Tegra210Gpio/src/tegra210gpio.c",
+    "previous_source_sha256": "17efe302f48a5c4e2c64851d2906d1fd3f1862724048063c638916243e481b50",
+    "candidate_source_sha256": "ae8bf2d406ee43d128fd6add25bac7440c02e21a080aafac510f0e3dd2c7362e",
+    "previous_image_reproduced": true,
+    "unsigned_candidate_sha256": "d8220e4b1cb337e6a3846a593af292b87feacab13303ec52d1cb1d45f910e7d4"
+  },
+  "candidate_package_sha256": {
+    "tegra210gpio.cat": "2cb8c254241ebe4cec0d141e2e9984746a26c93ce49bfe9561c1b0c8644d8985",
+    "tegra210gpio.inf": "30a54b56fba6f394c82b28d93bc512d86ef0d12891acc0a1c49a2ccfe0597492",
+    "tegra210gpio.sys": "8a767c673b73d25ef209640f395ed78d99883942b58bed4f2c4a480b30dcca93"
+  },
+  "previous_package_sha256": {
+    "tegra210gpio.sys": "5f93b63a365c1bf4f5b914b466653035d1fcf1e33cc8dc7547878e416a504be3",
+    "tegra210gpio.inf": "7b4d5c6f0c9b67edc37932595709c11b0276c562447ebda0998f925847cd894f",
+    "tegra210gpio.cat": "c492219e8d4d2badd6df66618e008568366fec4715c1bfa8023589630b11efe0"
+  },
+  "package_verification": {
+    "physical_windows_checks": [
+      {
+        "status": 0,
+        "file": "tegra210gpio.cat",
+        "side": "candidate"
+      },
+      {
+        "status": 0,
+        "file": "tegra210gpio.inf",
+        "side": "candidate"
+      },
+      {
+        "status": 0,
+        "file": "tegra210gpio.sys",
+        "side": "candidate"
+      },
+      {
+        "status": 0,
+        "file": "tegra210gpio.cat",
+        "side": "rollback"
+      },
+      {
+        "status": 0,
+        "file": "tegra210gpio.inf",
+        "side": "rollback"
+      },
+      {
+        "status": 0,
+        "file": "tegra210gpio.sys",
+        "side": "rollback"
+      }
+    ],
+    "windows_sdk_verification_log_sha256": "450051b86e56a5ca74cdcdc7148cac1f543a9eaea0affeab0a36b3d12a19cb4f",
+    "catalog_negative_control": "WinTrust rejected an altered INF in the isolated Windows PE check."
+  },
+  "acpi_and_devices": {
+    "map": {
+      "physical_boot": "2026-11-18T20:39:29.8023230Z",
+      "sample_utc": "2026-11-18T20:44:58.1067100Z",
+      "dsdt_sha256": "9eb6a7e17cca34e4f7ddbfd55bf31fcb8e1ff2ab0b852574c0406ce1a5935849",
+      "enumerated_root_acpi_signatures": [
+        "FACP",
+        "APIC",
+        "PPTT",
+        "GTDT",
+        "DBG2"
+      ],
+      "decoded_resource_templates": 20,
+      "descriptor_count_including_end_tags": 196,
+      "descriptor_types": {
+        "0x86": 139,
+        "0x89": 21,
+        "0x79": 20,
+        "0x55": 2,
+        "0x8c": 4,
+        "0x8e": 10
+      },
+      "gpio_controller": {
+        "mmio_base": 1610665984,
+        "mmio_length": 4096,
+        "gsivs": [
+          64,
+          65,
+          66,
+          67,
+          87,
+          119,
+          121,
+          157
+        ]
+      },
+      "gpio_connections": [
+        {
+          "owner": "BTNS",
+          "resource": "_CRS",
+          "connection_type": 0,
+          "pins": [
+            190
+          ],
+          "bank": 5,
+          "pins_within_bank": [
+            30
+          ],
+          "port_within_bank": 3,
+          "provider": "\\_SB.GPI0",
+          "interrupt_flags": 5,
+          "debounce_10us": 2000
+        },
+        {
+          "owner": "BTNS",
+          "resource": "_CRS",
+          "connection_type": 0,
+          "pins": [
+            191
+          ],
+          "bank": 5,
+          "pins_within_bank": [
+            31
+          ],
+          "port_within_bank": 3,
+          "provider": "\\_SB.GPI0",
+          "interrupt_flags": 5,
+          "debounce_10us": 2000
+        },
+        {
+          "owner": "SIO0",
+          "resource": "_CRS",
+          "connection_type": 1,
+          "pins": [
+            171
+          ],
+          "bank": 5,
+          "pins_within_bank": [
+            11
+          ],
+          "port_within_bank": 1,
+          "provider": "\\_SB.GPI0",
+          "debounce_10us": 0,
+          "io_flags": 1,
+          "io_restriction_value": 1
+        },
+        {
+          "owner": "TCH0",
+          "resource": "_CRS",
+          "connection_type": 0,
+          "pins": [
+            185
+          ],
+          "bank": 5,
+          "pins_within_bank": [
+            25
+          ],
+          "port_within_bank": 3,
+          "provider": "\\_SB.GPI0",
+          "interrupt_flags": 2,
+          "debounce_10us": 0
+        }
+      ]
+    },
+    "initial_gpio_diagnostics": {
+      "PrepareStatus": 0,
+      "QuerySetBank0Index": 1,
+      "AddCreateStatus": 0,
+      "PrepareResourceCount": 9,
+      "StartCalled": 1,
+      "MmioLength": 4096,
+      "QuerySetInputSize": 48,
+      "RegisterStatus": 0,
+      "QueryBasicCalled": 1,
+      "QuerySetTotalBanks": 8,
+      "QuerySetType": 1,
+      "AddPreStatus": 0,
+      "AddPostStatus": 0,
+      "QuerySetBoundBanks": 8,
+      "DriverVersion": 4
+    },
+    "controller_and_clients": [
+      {
+        "id": "HID\\ACPI0011\\3&1F273C3D&0&0000",
+        "parent": "ACPI\\ACPI0011\\0",
+        "version": "10.0.22621.1",
+        "children": [
+          "ButtonConverter\\ConvertedDevice\\4&18057223&0&0"
+        ],
+        "name": "Portable Device Control device",
+        "service": "buttonconverter",
+        "code": 0,
+        "inf": "buttonconverter.inf",
+        "hardware": [
+          "HID\\VEN_ACPI&DEV_0011",
+          "HID\\ACPI0011",
+          "HID\\*ACPI0011",
+          "HID_DEVICE_UP:0001_U:000D",
+          "HID_DEVICE"
+        ]
+      },
+      {
+        "id": "ACPI\\ACPI0011\\0",
+        "parent": "ACPI_HAL\\PNP0C08\\0",
+        "version": "10.0.22621.1",
+        "children": [
+          "HID\\ACPI0011\\3&1f273c3d&0&0000"
+        ],
+        "name": "HID Button over Interrupt Driver",
+        "service": "hidinterrupt",
+        "code": 0,
+        "inf": "hidinterrupt.inf",
+        "hardware": [
+          "ACPI\\VEN_ACPI&DEV_0011",
+          "ACPI\\ACPI0011",
+          "*ACPI0011"
+        ]
+      },
+      {
+        "id": "ACPI\\SWOA0101\\0",
+        "parent": "ACPI_HAL\\PNP0C08\\0",
+        "version": "1.0.0.4",
+        "children": [],
+        "name": "NVIDIA Tegra210 GPIO Controller",
+        "service": "tegra210gpio",
+        "code": 0,
+        "inf": "oem1.inf",
+        "hardware": [
+          "ACPI\\VEN_SWOA&DEV_0101",
+          "ACPI\\SWOA0101",
+          "*SWOA0101"
+        ]
+      },
+      {
+        "id": "ACPI\\SWOA0502\\0",
+        "parent": "ACPI_HAL\\PNP0C08\\0",
+        "version": "1.0.1.2",
+        "children": [
+          "VHF\\HID_DEVICE_SYSTEM_VHF\\3&1d49896f&0&{584fcaef-38fe-56d7-8648-ae545be60fec}"
+        ],
+        "name": "Nintendo Switch Lite FTM4 Touch Screen",
+        "service": "switchtouch",
+        "code": 0,
+        "inf": "oem58.inf",
+        "hardware": [
+          "ACPI\\VEN_SWOA&DEV_0502",
+          "ACPI\\SWOA0502",
+          "*SWOA0502"
+        ]
+      }
+    ],
+    "active_touch_source": {
+      "commit": "ca891d9d9a36fd74417b768b1587f349e54e76ad",
+      "file": "drivers/SwitchLiteTouch/src/switchtouch.c",
+      "signed_sha256": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+      "normalized_pe_sha256": "048b972e694aac40a50589c63d1507e574f94b5705d2c3a84b90c3f9da6271b4",
+      "exact_unsigned_sha256": "08beacd635d7ab94f90b597399d6a5b64fb7dbfb8ebd3ba1e607b1154b7ff528",
+      "matched": true
+    },
+    "notes": "The two volume pins and the touch interrupt use bank 5 port 3. Pin 171 is a separate input-only GPIO connection for SIO. The PMIC power button uses I2C5. The signed touch driver came from the superseding 1.0.1.2 input source."
+  },
+  "arm64_callback_control": {
+    "method": "Exact compiled callback sources with checked 32-bit register reads on an ARM64 Switch process and the host. The eight physical banks are covered with fixed cases and deterministic random masks. The real-board masks from ETW also have explicit cases.",
+    "results": {
+      "reference": {
+        "hash": "283ce39b8199c5ba95c491a97221b9163e005793fee5f859423188dbe9ceb542",
+        "cases": 32776,
+        "mask_mismatches": 0,
+        "register_reads": 262208,
+        "case_rows": [
+          "no_requested_pins,5,00000000,8,0",
+          "outside_32_pin_bank,5,00000000,8,0",
+          "quiet_touch_and_volume_port,5,00000000,8,1",
+          "touch_active,5,02000000,8,2",
+          "volume_up_active,5,40000000,8,2",
+          "masked_volume_down,5,00000000,8,2",
+          "other_port_pending,5,00000000,8,1",
+          "full_bank,7,ffffffff,8,8"
+        ]
+      },
+      "candidate": {
+        "hash": "768e1318279b77f18b6d8dd2c351a1a16ecc64438f2f7e56489ca74752030dfe",
+        "cases": 32776,
+        "mask_mismatches": 0,
+        "register_reads": 186458,
+        "case_rows": [
+          "no_requested_pins,5,00000000,0,0",
+          "outside_32_pin_bank,5,00000000,0,0",
+          "quiet_touch_and_volume_port,5,00000000,1,1",
+          "touch_active,5,02000000,2,2",
+          "volume_up_active,5,40000000,2,2",
+          "masked_volume_down,5,00000000,2,2",
+          "other_port_pending,5,00000000,1,1",
+          "full_bank,7,ffffffff,8,8"
+        ]
+      }
+    },
+    "cold_port_board_mask": "0xc2000000",
+    "active_touch_bit": "0x02000000",
+    "register_reads_for_board_with_active_touch": {
+      "reference": 8,
+      "candidate": 2
+    },
+    "register_reads_for_same_mask_with_no_pending_requested_bit": {
+      "reference": 8,
+      "candidate": 1
+    },
+    "all_ports_requested_and_active": {
+      "reference": 8,
+      "candidate": 8
+    }
+  },
+  "physical_method": "Restart only the FTM4 PnP device on a settled interactive desktop. Capture the GPIO Class Extension ETW provider during panel reinitialization. Pair query start/complete on the same logical CPU and thread using raw QPC ticks. Verify the bank interrupt GSIV, enabled pins, active bit and actual target ISR. Test in reference, candidate, restored reference, reselected candidate order.",
+  "etw_provider": {
+    "name": "Microsoft-Windows-GPIO-ClassExtension",
+    "guid": "55ab77f6-fa04-43ef-af45-688fbf500482",
+    "query_start_id": 1019,
+    "query_complete_id": 1020,
+    "pin_state_id": 1014,
+    "isr_start_id": 1012,
+    "signed_capture_exe_sha256": "c2e38bb6c2fe5b976f6ea385d291b566c0d19cc7a8d02f41e30da4c65fa80037",
+    "source": "drivers/Tegra210Gpio/tests/trace-touch.cpp",
+    "sha256": "6ebe0c8f77a8222f42527b430c32980d1787cabffa060521c231f7a1fce592ae"
+  },
+  "physical_samples": {
+    "reference": [
+      {
+        "receipt": "s5-gpio-reference-20261118T205021Z.json",
+        "start_utc": "2026-11-18T20:50:28.5060533Z",
+        "end_utc": "2026-11-18T20:50:33.5881832Z",
+        "boot": "2026-11-18T20:39:29.8031010Z",
+        "end_boot": "2026-11-18T20:39:29.8031010Z",
+        "trace_events": 36,
+        "qpc_hz": 19200000,
+        "etl_sha256": "6a4f25370094fb23e2f3678de764e77d48f06d593b49c785c80df1c4b0fa6b53",
+        "native_exit": 0,
+        "trace_events_lost": 0,
+        "trace_buffers_lost": 0,
+        "event_counts": {
+          "1017": 3,
+          "1018": 3,
+          "1008": 1,
+          "1009": 1,
+          "1010": 1,
+          "1011": 1,
+          "1015": 2,
+          "1019": 2,
+          "1020": 2,
+          "1014": 2,
+          "1012": 2,
+          "1013": 2,
+          "1016": 2,
+          "1006": 2,
+          "1007": 2,
+          "1002": 2,
+          "1003": 2,
+          "1025": 2,
+          "1026": 2
+        },
+        "bank_irqs": [
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          },
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          }
+        ],
+        "invoke_device_isr": [
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          },
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          }
+        ],
+        "pin_state": [
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          },
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          }
+        ],
+        "query_active": [
+          {
+            "bank": 5,
+            "cpu": 0,
+            "start": 12719249969,
+            "ticks": 160,
+            "us": 8.33333
+          },
+          {
+            "bank": 5,
+            "cpu": 0,
+            "start": 12719518912,
+            "ticks": 168,
+            "us": 8.75
+          }
+        ],
+        "sys": "5f93b63a365c1bf4f5b914b466653035d1fcf1e33cc8dc7547878e416a504be3",
+        "touch_sys": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+        "gpio_version": 4,
+        "pnpcodes_after": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "touch_after": {
+          "ChipId": "13936",
+          "Reports": "0",
+          "Irqs": "1",
+          "ProbeStatus": "0",
+          "VhfStartStatus": "0",
+          "LastLandscapeX": "0",
+          "Errors": "0",
+          "Polls": "1",
+          "Events": "2",
+          "LastLandscapeY": "0",
+          "InterruptCreateStatus": "0",
+          "IntEnableStatus": "0"
+        },
+        "native_cpu_khz": [
+          1147500,
+          515428
+        ],
+        "emc_khz": [
+          1600000,
+          2500000
+        ],
+        "temp_c": [
+          38,
+          38
+        ],
+        "emc_errors": [
+          0,
+          0
+        ],
+        "handheld": true,
+        "dwm": [
+          [
+            1420
+          ],
+          [
+            1420
+          ]
+        ],
+        "kmd": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+        "case": "irq-old-01",
+        "receipt_sha256": "f6c1fe3961304e07e0016e8e1ca53c74151cc9955f3fc75ec47c8ed7cd50b70f"
+      },
+      {
+        "receipt": "s5-gpio-reference-20261118T210018Z.json",
+        "start_utc": "2026-11-18T21:00:24.4988824Z",
+        "end_utc": "2026-11-18T21:00:29.2380815Z",
+        "boot": "2026-11-18T20:58:21.6192250Z",
+        "end_boot": "2026-11-18T20:58:21.6192250Z",
+        "trace_events": 36,
+        "qpc_hz": 19200000,
+        "etl_sha256": "526e0f22301048d5c309b840dd5d8b86233732af851634e18042c9a077d45a0d",
+        "native_exit": 0,
+        "trace_events_lost": 0,
+        "trace_buffers_lost": 0,
+        "event_counts": {
+          "1017": 3,
+          "1018": 3,
+          "1008": 1,
+          "1009": 1,
+          "1010": 1,
+          "1011": 1,
+          "1015": 2,
+          "1019": 2,
+          "1020": 2,
+          "1014": 2,
+          "1012": 2,
+          "1013": 2,
+          "1016": 2,
+          "1006": 2,
+          "1007": 2,
+          "1002": 2,
+          "1003": 2,
+          "1025": 2,
+          "1026": 2
+        },
+        "bank_irqs": [
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          },
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          }
+        ],
+        "invoke_device_isr": [
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          },
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          }
+        ],
+        "pin_state": [
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          },
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          }
+        ],
+        "query_active": [
+          {
+            "bank": 5,
+            "cpu": 1,
+            "start": 2424430078,
+            "ticks": 166,
+            "us": 8.64583
+          },
+          {
+            "bank": 5,
+            "cpu": 1,
+            "start": 2424698294,
+            "ticks": 160,
+            "us": 8.33333
+          }
+        ],
+        "sys": "5f93b63a365c1bf4f5b914b466653035d1fcf1e33cc8dc7547878e416a504be3",
+        "touch_sys": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+        "gpio_version": 4,
+        "pnpcodes_after": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "touch_after": {
+          "ChipId": "13936",
+          "Reports": "0",
+          "Irqs": "2",
+          "ProbeStatus": "0",
+          "VhfStartStatus": "0",
+          "LastLandscapeX": "0",
+          "Errors": "0",
+          "Polls": "1",
+          "Events": "2",
+          "LastLandscapeY": "0",
+          "InterruptCreateStatus": "0",
+          "IntEnableStatus": "0"
+        },
+        "native_cpu_khz": [
+          916804,
+          1147500
+        ],
+        "emc_khz": [
+          1331200,
+          1600000
+        ],
+        "temp_c": [
+          39,
+          39
+        ],
+        "emc_errors": [
+          0,
+          0
+        ],
+        "handheld": true,
+        "dwm": [
+          [
+            1400
+          ],
+          [
+            1400
+          ]
+        ],
+        "kmd": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+        "case": "irq-old-02",
+        "receipt_sha256": "ab68d79c14614961dd6dbba7f9ff9e8a1c726e472474ef59ae4cb4ec771445d1"
+      }
+    ],
+    "candidate": [
+      {
+        "receipt": "s5-gpio-candidate-20261118T205621Z.json",
+        "start_utc": "2026-11-18T20:56:28.9120989Z",
+        "end_utc": "2026-11-18T20:56:37.4347964Z",
+        "boot": "2026-11-18T20:53:56.2439110Z",
+        "end_boot": "2026-11-18T20:53:56.2439110Z",
+        "trace_events": 36,
+        "qpc_hz": 19200000,
+        "etl_sha256": "672f2757a4ca18c4f5d610b7c17c3c1baaaa046abe93669df070de935e60a509",
+        "native_exit": 0,
+        "trace_events_lost": 0,
+        "trace_buffers_lost": 0,
+        "event_counts": {
+          "1017": 3,
+          "1018": 3,
+          "1008": 1,
+          "1009": 1,
+          "1010": 1,
+          "1011": 1,
+          "1015": 2,
+          "1019": 2,
+          "1020": 2,
+          "1014": 2,
+          "1012": 2,
+          "1013": 2,
+          "1016": 2,
+          "1006": 2,
+          "1007": 2,
+          "1002": 2,
+          "1003": 2,
+          "1025": 2,
+          "1026": 2
+        },
+        "bank_irqs": [
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          },
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          }
+        ],
+        "invoke_device_isr": [
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          },
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          }
+        ],
+        "pin_state": [
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          },
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          }
+        ],
+        "query_active": [
+          {
+            "bank": 5,
+            "cpu": 0,
+            "start": 3071108133,
+            "ticks": 55,
+            "us": 2.86458
+          },
+          {
+            "bank": 5,
+            "cpu": 0,
+            "start": 3071380779,
+            "ticks": 67,
+            "us": 3.48958
+          }
+        ],
+        "sys": "8a767c673b73d25ef209640f395ed78d99883942b58bed4f2c4a480b30dcca93",
+        "touch_sys": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+        "gpio_version": 5,
+        "pnpcodes_after": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "touch_after": {
+          "ChipId": "13936",
+          "Reports": "0",
+          "Irqs": "2",
+          "ProbeStatus": "0",
+          "VhfStartStatus": "0",
+          "LastLandscapeX": "0",
+          "Errors": "0",
+          "Polls": "1",
+          "Events": "2",
+          "LastLandscapeY": "0",
+          "InterruptCreateStatus": "0",
+          "IntEnableStatus": "0"
+        },
+        "native_cpu_khz": [
+          805341,
+          413129
+        ],
+        "emc_khz": [
+          1331200,
+          1331200
+        ],
+        "temp_c": [
+          39,
+          38
+        ],
+        "emc_errors": [
+          0,
+          0
+        ],
+        "handheld": true,
+        "dwm": [
+          [
+            1476
+          ],
+          [
+            1476
+          ]
+        ],
+        "kmd": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+        "case": "irq-new-01",
+        "receipt_sha256": "5a0f9094ba6adf72e2a44c30769f90d95a08ae51f1b8b0ea39279a2ea362c1d1"
+      },
+      {
+        "receipt": "s5-gpio-candidate-20261118T210357Z.json",
+        "start_utc": "2026-11-18T21:04:03.4901598Z",
+        "end_utc": "2026-11-18T21:04:08.0561608Z",
+        "boot": "2026-11-18T21:02:04.2770480Z",
+        "end_boot": "2026-11-18T21:02:04.2770480Z",
+        "trace_events": 36,
+        "qpc_hz": 19200000,
+        "etl_sha256": "19436ba5636c65b2a3605f37faa3f206672d6641f2f88563a6d170b718790125",
+        "native_exit": 0,
+        "trace_events_lost": 0,
+        "trace_buffers_lost": 0,
+        "event_counts": {
+          "1017": 3,
+          "1018": 3,
+          "1008": 1,
+          "1009": 1,
+          "1010": 1,
+          "1011": 1,
+          "1015": 2,
+          "1019": 2,
+          "1020": 2,
+          "1014": 2,
+          "1012": 2,
+          "1013": 2,
+          "1016": 2,
+          "1006": 2,
+          "1007": 2,
+          "1002": 2,
+          "1003": 2,
+          "1025": 2,
+          "1026": 2
+        },
+        "bank_irqs": [
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          },
+          {
+            "ControllerBiosName": "\\_SB.GPI0",
+            "BankId": 5,
+            "Gsiv": 119
+          }
+        ],
+        "invoke_device_isr": [
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          },
+          {
+            "PinNumber": 25,
+            "Gsiv": 1026
+          }
+        ],
+        "pin_state": [
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          },
+          {
+            "EnableRegister": 3254779904,
+            "MaskRegister": 0,
+            "StatusRegister": 33554432,
+            "NonEnabledActiveInterrupts": 0,
+            "ReplayRegister": 0
+          }
+        ],
+        "query_active": [
+          {
+            "bank": 5,
+            "cpu": 1,
+            "start": 2351375069,
+            "ticks": 64,
+            "us": 3.33333
+          },
+          {
+            "bank": 5,
+            "cpu": 1,
+            "start": 2351647717,
+            "ticks": 70,
+            "us": 3.64583
+          }
+        ],
+        "sys": "8a767c673b73d25ef209640f395ed78d99883942b58bed4f2c4a480b30dcca93",
+        "touch_sys": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+        "gpio_version": 5,
+        "pnpcodes_after": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "touch_after": {
+          "ChipId": "13936",
+          "Reports": "0",
+          "Irqs": "2",
+          "ProbeStatus": "0",
+          "VhfStartStatus": "0",
+          "LastLandscapeX": "0",
+          "Errors": "0",
+          "Polls": "1",
+          "Events": "2",
+          "LastLandscapeY": "0",
+          "InterruptCreateStatus": "0",
+          "IntEnableStatus": "0"
+        },
+        "native_cpu_khz": [
+          1109250,
+          1606500
+        ],
+        "emc_khz": [
+          1331200,
+          2500000
+        ],
+        "temp_c": [
+          39,
+          38
+        ],
+        "emc_errors": [
+          0,
+          0
+        ],
+        "handheld": true,
+        "dwm": [
+          [
+            1420
+          ],
+          [
+            1420
+          ]
+        ],
+        "kmd": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+        "case": "irq-new-02",
+        "receipt_sha256": "a3f2bb2273c13713d0b06ccc92c547bcfdb22462de3bb693b751f43bdf100eb3"
+      }
+    ]
+  },
+  "query_timing": {
+    "reference": {
+      "cases": [
+        "irq-old-01",
+        "irq-old-02"
+      ],
+      "queries": 4,
+      "us": [
+        8.33333,
+        8.75,
+        8.64583,
+        8.33333
+      ],
+      "median_us": 8.48958,
+      "range_us": [
+        8.33333,
+        8.75
+      ]
+    },
+    "candidate": {
+      "cases": [
+        "irq-new-01",
+        "irq-new-02"
+      ],
+      "queries": 4,
+      "us": [
+        2.86458,
+        3.48958,
+        3.33333,
+        3.64583
+      ],
+      "median_us": 3.411455,
+      "range_us": [
+        2.86458,
+        3.64583
+      ]
+    }
+  },
+  "scope": "ETW spans include the framework trace boundary. The tested stimulus is FTM4 initialization. The register access counts come from the instrumented callback with the observed pin masks. These samples do not measure interactive touch latency, physical volume-button presses, system resume, game FPS or the cause of earlier unexpected restarts.",
+  "binding_and_rollback": [
+    {
+      "case": "select-new-01",
+      "target": "candidate",
+      "previous_version": "1.0.0.4",
+      "requested_version": "1.0.0.5",
+      "diagnostic_version_before_restart": 4,
+      "targeted_setup_flags": 5,
+      "need_restart": true,
+      "ordinary_restart_events": [
+        {
+          "record": 67639,
+          "utc": "2026-11-18T20:53:08.2551300Z",
+          "id": 1074
+        },
+        {
+          "record": 67641,
+          "utc": "2026-11-18T20:53:23.5224871Z",
+          "id": 6006
+        },
+        {
+          "record": 67650,
+          "utc": "2026-11-18T20:54:39.8668658Z",
+          "id": 6005
+        }
+      ],
+      "boot_proof": {
+        "phase": "Bound",
+        "sample": {
+          "start": 1,
+          "version": "1.0.0.5",
+          "banks": 8,
+          "touch_irq": 2,
+          "oem": "oem145.inf",
+          "utc": "2026-11-18T20:55:35.0201893Z",
+          "diag": 5,
+          "sys": "8A767C673B73D25EF209640F395ED78D99883942B58BED4F2C4A480B30DCCA93",
+          "inf": "30A54B56FBA6F394C82B28D93BC512D86EF0D12891ACC0A1C49A2CCFE0597492",
+          "prepare": 0,
+          "devices": [
+            {
+              "id": "ACPI\\SWOA0101\\0",
+              "code": 0
+            },
+            {
+              "id": "ACPI\\SWOA0502\\0",
+              "code": 0
+            },
+            {
+              "id": "ACPI\\ACPI0011\\0",
+              "code": 0
+            }
+          ],
+          "touch_probe": 0,
+          "touch_setup": 0
+        },
+        "boot": "2026-11-18T20:53:56.2439110Z",
+        "side": "candidate"
+      }
+    },
+    {
+      "case": "restore-old-01",
+      "target": "rollback",
+      "previous_version": "1.0.0.5",
+      "requested_version": "1.0.0.4",
+      "diagnostic_version_before_restart": 5,
+      "targeted_setup_flags": 5,
+      "need_restart": true,
+      "ordinary_restart_events": [
+        {
+          "record": 67728,
+          "utc": "2026-11-18T20:57:24.1272206Z",
+          "id": 1074
+        },
+        {
+          "record": 67730,
+          "utc": "2026-11-18T20:57:39.0343251Z",
+          "id": 6006
+        },
+        {
+          "record": 67739,
+          "utc": "2026-11-18T20:58:57.1040729Z",
+          "id": 6005
+        }
+      ],
+      "boot_proof": {
+        "phase": "Bound",
+        "sample": {
+          "start": 1,
+          "version": "1.0.0.4",
+          "banks": 8,
+          "touch_irq": 2,
+          "oem": "oem144.inf",
+          "utc": "2026-11-18T20:59:52.6366824Z",
+          "diag": 4,
+          "sys": "5F93B63A365C1BF4F5B914B466653035D1FCF1E33CC8DC7547878E416A504BE3",
+          "inf": "7B4D5C6F0C9B67EDC37932595709C11B0276C562447EBDA0998F925847CD894F",
+          "prepare": 0,
+          "devices": [
+            {
+              "id": "ACPI\\SWOA0101\\0",
+              "code": 0
+            },
+            {
+              "id": "ACPI\\SWOA0502\\0",
+              "code": 0
+            },
+            {
+              "id": "ACPI\\ACPI0011\\0",
+              "code": 0
+            }
+          ],
+          "touch_probe": 0,
+          "touch_setup": 0
+        },
+        "boot": "2026-11-18T20:58:21.6192250Z",
+        "side": "rollback"
+      }
+    },
+    {
+      "case": "select-new-02",
+      "target": "candidate",
+      "previous_version": "1.0.0.4",
+      "requested_version": "1.0.0.5",
+      "diagnostic_version_before_restart": 4,
+      "targeted_setup_flags": 5,
+      "need_restart": true,
+      "ordinary_restart_events": [
+        {
+          "record": 67817,
+          "utc": "2026-11-18T21:01:22.7717268Z",
+          "id": 1074
+        },
+        {
+          "record": 67819,
+          "utc": "2026-11-18T21:01:37.0744414Z",
+          "id": 6006
+        },
+        {
+          "record": 67827,
+          "utc": "2026-11-18T21:02:38.6001056Z",
+          "id": 6005
+        }
+      ],
+      "boot_proof": {
+        "phase": "Bound",
+        "sample": {
+          "start": 1,
+          "version": "1.0.0.5",
+          "banks": 8,
+          "touch_irq": 111,
+          "oem": "oem145.inf",
+          "utc": "2026-11-18T21:03:31.7432786Z",
+          "diag": 5,
+          "sys": "8A767C673B73D25EF209640F395ED78D99883942B58BED4F2C4A480B30DCCA93",
+          "inf": "30A54B56FBA6F394C82B28D93BC512D86EF0D12891ACC0A1C49A2CCFE0597492",
+          "prepare": 0,
+          "devices": [
+            {
+              "id": "ACPI\\SWOA0101\\0",
+              "code": 0
+            },
+            {
+              "id": "ACPI\\SWOA0502\\0",
+              "code": 0
+            },
+            {
+              "id": "ACPI\\ACPI0011\\0",
+              "code": 0
+            }
+          ],
+          "touch_probe": 0,
+          "touch_setup": 0
+        },
+        "boot": "2026-11-18T21:02:04.2770480Z",
+        "side": "candidate"
+      }
+    }
+  ],
+  "settled_boots": {
+    "select-new-01": {
+      "boot": "2026-11-18T20:53:56.2439110Z",
+      "utc": "2026-11-18T20:56:19.8443285Z",
+      "gpio_binding": {
+        "oem": "oem145.inf",
+        "diagnostic_version": 5,
+        "version": "1.0.0.5"
+      },
+      "component_sha256": {
+        "gpu": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+        "touch": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+        "gpio": "8a767c673b73d25ef209640f395ed78d99883942b58bed4f2c4a480b30dcca93",
+        "rtc": "169164193d731756791d476894c67751c87ceef27d5c14b7aa3a47b9556de797",
+        "button": "879550e4eb292619f45de86eb458fc94f07149ca3de95bc88369166fcd64914e"
+      },
+      "problem_codes": {
+        "ACPI\\SWOA0902\\0": 0,
+        "ACPI\\SWOA0201\\1": 0,
+        "ACPI\\SWOA0201\\3": 0,
+        "ACPI\\SWOA0201\\5": 0,
+        "ACPI\\ACPI0011\\0": 0,
+        "ACPI\\SWOA0601\\0": 0,
+        "ACPI\\SWOA0F01\\0": 0,
+        "ACPI\\NVDA0101\\0": 0,
+        "ACPI\\SWOA0314\\0": 0,
+        "ACPI\\SWOA0C01\\0": 0,
+        "ACPI\\SWOA0402\\0": 0,
+        "ACPI\\SWOA0801\\0": 0,
+        "ACPI\\SWOA0101\\0": 0,
+        "ACPI\\SWOA0D01\\0": 0,
+        "ACPI\\SWOA0502\\0": 0
+      },
+      "dwm_sha256": {
+        "TegraGpuD3DVk.dll": "ded6fa4affec0f18773503d282f9b44939090488202ef5f25ea1d879dd862f0d",
+        "libvulkan_nouveau.dll": "e563a81d6196c91dde95aaa112ff410c3b32f07ebf9754609428c34f27e52934"
+      },
+      "rtc_version": "4",
+      "button_version": "8",
+      "i2c": {
+        "timeouts": 0,
+        "nacks": 0,
+        "errors": 0,
+        "version": 7
+      },
+      "emc": {
+        "rate_khz": 1331200,
+        "boot_transitions": 66,
+        "last_error": 0
+      },
+      "power_mode": 1,
+      "pacecar_settings": "9b44f2e1666c9d603180972b551797a2dec76326f73bc6693db0d3626a37bfa7",
+      "pacecar_binary": "135285da2255e087c8b37e5034b023035a01d3990ab2b10e4e0220bdc56c7d24",
+      "pacecar_backup": "710c6b79e1e5e7cb82311732d4d34adef76a6bf721573dd6bbd470eca95bbf35",
+      "application_loader_settings": "e273b17805e5df8e8f0709d9cf3e4bb70a624e2c644cb40899cc7baf60b332d6"
+    },
+    "restore-old-01": {
+      "boot": "2026-11-18T20:58:21.6192250Z",
+      "utc": "2026-11-18T21:00:16.4330299Z",
+      "gpio_binding": {
+        "oem": "oem144.inf",
+        "diagnostic_version": 4,
+        "version": "1.0.0.4"
+      },
+      "component_sha256": {
+        "gpu": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+        "touch": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+        "gpio": "5f93b63a365c1bf4f5b914b466653035d1fcf1e33cc8dc7547878e416a504be3",
+        "rtc": "169164193d731756791d476894c67751c87ceef27d5c14b7aa3a47b9556de797",
+        "button": "879550e4eb292619f45de86eb458fc94f07149ca3de95bc88369166fcd64914e"
+      },
+      "problem_codes": {
+        "ACPI\\SWOA0902\\0": 0,
+        "ACPI\\SWOA0201\\1": 0,
+        "ACPI\\SWOA0201\\3": 0,
+        "ACPI\\SWOA0201\\5": 0,
+        "ACPI\\ACPI0011\\0": 0,
+        "ACPI\\SWOA0601\\0": 0,
+        "ACPI\\SWOA0F01\\0": 0,
+        "ACPI\\NVDA0101\\0": 0,
+        "ACPI\\SWOA0314\\0": 0,
+        "ACPI\\SWOA0C01\\0": 0,
+        "ACPI\\SWOA0402\\0": 0,
+        "ACPI\\SWOA0801\\0": 0,
+        "ACPI\\SWOA0101\\0": 0,
+        "ACPI\\SWOA0D01\\0": 0,
+        "ACPI\\SWOA0502\\0": 0
+      },
+      "dwm_sha256": {
+        "TegraGpuD3DVk.dll": "ded6fa4affec0f18773503d282f9b44939090488202ef5f25ea1d879dd862f0d",
+        "libvulkan_nouveau.dll": "e563a81d6196c91dde95aaa112ff410c3b32f07ebf9754609428c34f27e52934"
+      },
+      "rtc_version": "4",
+      "button_version": "8",
+      "i2c": {
+        "timeouts": 0,
+        "nacks": 0,
+        "errors": 0,
+        "version": 7
+      },
+      "emc": {
+        "rate_khz": 1600000,
+        "boot_transitions": 27,
+        "last_error": 0
+      },
+      "power_mode": 1,
+      "pacecar_settings": "9b44f2e1666c9d603180972b551797a2dec76326f73bc6693db0d3626a37bfa7",
+      "pacecar_binary": null,
+      "pacecar_backup": "710c6b79e1e5e7cb82311732d4d34adef76a6bf721573dd6bbd470eca95bbf35",
+      "application_loader_settings": "e273b17805e5df8e8f0709d9cf3e4bb70a624e2c644cb40899cc7baf60b332d6"
+    },
+    "select-new-02": {
+      "boot": "2026-11-18T21:02:04.2770480Z",
+      "utc": "2026-11-18T21:03:54.5653781Z",
+      "gpio_binding": {
+        "oem": "oem145.inf",
+        "diagnostic_version": 5,
+        "version": "1.0.0.5"
+      },
+      "component_sha256": {
+        "gpu": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+        "touch": "d0a056d2de17a3968d7a9340154516f132c0c69bbd3e99a393a5e6557cdb1a39",
+        "gpio": "8a767c673b73d25ef209640f395ed78d99883942b58bed4f2c4a480b30dcca93",
+        "rtc": "169164193d731756791d476894c67751c87ceef27d5c14b7aa3a47b9556de797",
+        "button": "879550e4eb292619f45de86eb458fc94f07149ca3de95bc88369166fcd64914e"
+      },
+      "problem_codes": {
+        "ACPI\\SWOA0902\\0": 0,
+        "ACPI\\SWOA0201\\1": 0,
+        "ACPI\\SWOA0201\\3": 0,
+        "ACPI\\SWOA0201\\5": 0,
+        "ACPI\\ACPI0011\\0": 0,
+        "ACPI\\SWOA0601\\0": 0,
+        "ACPI\\SWOA0F01\\0": 0,
+        "ACPI\\NVDA0101\\0": 0,
+        "ACPI\\SWOA0314\\0": 0,
+        "ACPI\\SWOA0C01\\0": 0,
+        "ACPI\\SWOA0402\\0": 0,
+        "ACPI\\SWOA0801\\0": 0,
+        "ACPI\\SWOA0101\\0": 0,
+        "ACPI\\SWOA0D01\\0": 0,
+        "ACPI\\SWOA0502\\0": 0
+      },
+      "dwm_sha256": {
+        "TegraGpuD3DVk.dll": "ded6fa4affec0f18773503d282f9b44939090488202ef5f25ea1d879dd862f0d",
+        "libvulkan_nouveau.dll": "e563a81d6196c91dde95aaa112ff410c3b32f07ebf9754609428c34f27e52934"
+      },
+      "rtc_version": "4",
+      "button_version": "8",
+      "i2c": {
+        "timeouts": 0,
+        "nacks": 0,
+        "errors": 0,
+        "version": 7
+      },
+      "emc": {
+        "rate_khz": 1600000,
+        "boot_transitions": 19,
+        "last_error": 0
+      },
+      "power_mode": 1,
+      "pacecar_settings": "9b44f2e1666c9d603180972b551797a2dec76326f73bc6693db0d3626a37bfa7",
+      "pacecar_binary": null,
+      "pacecar_backup": "710c6b79e1e5e7cb82311732d4d34adef76a6bf721573dd6bbd470eca95bbf35",
+      "application_loader_settings": "e273b17805e5df8e8f0709d9cf3e4bb70a624e2c644cb40899cc7baf60b332d6"
+    }
+  },
+  "final_pacecar_readback": {
+    "utc": "2026-11-18T21:04:36.0604569Z",
+    "boot": "2026-11-18T21:02:04.2770480Z",
+    "binary_sha256": "135285da2255e087c8b37e5034b023035a01d3990ab2b10e4e0220bdc56c7d24",
+    "settings_sha256": "9b44f2e1666c9d603180972b551797a2dec76326f73bc6693db0d3626a37bfa7",
+    "scope": "The widget started after two of the earlier desktop samples. Its binary and settings were verified after final reselection."
+  },
+  "cleanup": {
+    "native_files": 28,
+    "retained_recovery_directory": "C:\\ProgramData\\SwitchWOA\\DriverReview\\s5-gpio-active-8a767c673b",
+    "retained_files": [
+      "candidate/tegra210gpio.sys",
+      "candidate/tegra210gpio.inf",
+      "candidate/tegra210gpio.cat",
+      "rollback/tegra210gpio.sys",
+      "rollback/tegra210gpio.inf",
+      "rollback/tegra210gpio.cat",
+      "rollback/tegra210gpio-retained.inf",
+      "config.json",
+      "Select-Gpio.ps1"
+    ],
+    "one_shot_tasks_retired": 3,
+    "etw_session_retired": true,
+    "native_etl_copies_sha256": [
+      {
+        "case": "irq-old-01",
+        "bytes": 131072,
+        "sha256": "6a4f25370094fb23e2f3678de764e77d48f06d593b49c785c80df1c4b0fa6b53"
+      },
+      {
+        "case": "irq-old-02",
+        "bytes": 98304,
+        "sha256": "526e0f22301048d5c309b840dd5d8b86233732af851634e18042c9a077d45a0d"
+      },
+      {
+        "case": "irq-new-01",
+        "bytes": 163840,
+        "sha256": "672f2757a4ca18c4f5d610b7c17c3c1baaaa046abe93669df070de935e60a509"
+      },
+      {
+        "case": "irq-new-02",
+        "bytes": 163840,
+        "sha256": "19436ba5636c65b2a3605f37faa3f206672d6641f2f88563a6d170b718790125"
+      }
+    ],
+    "mac_temporary_logical_bytes": 359731975
+  },
+  "references": {
+    "GpioClx_query_callback": "https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/gpioclx/nc-gpioclx-gpio_client_query_active_interrupts",
+    "ACPI0011_button_mapping": "https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/acpi-button-device"
+  },
+  "independent_review": "Pending separate Gemini review."
+}

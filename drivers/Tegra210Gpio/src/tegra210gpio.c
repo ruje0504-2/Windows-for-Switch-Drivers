@@ -335,8 +335,22 @@ static NTSTATUS TegraGpioUnmaskInterrupt(PVOID Context, PGPIO_ENABLE_INTERRUPT_P
 static NTSTATUS TegraGpioQueryActiveInterrupts(PVOID Context, PGPIO_QUERY_ACTIVE_INTERRUPTS_PARAMETERS Params)
 {
     PTEGRA_GPIO_CONTEXT Ctx = (PTEGRA_GPIO_CONTEXT)Context;
-    Params->ActiveMask = TegraGpioReadBank(Ctx, Params->BankId, REG_INT_STA) &
-                         TegraGpioReadBank(Ctx, Params->BankId, REG_INT_ENB) & Params->EnabledMask;
+    ULONG64 Active = 0;
+    ULONG Requested = (ULONG)Params->EnabledMask;
+    ULONG Port;
+
+    /* Each bank has four 8-pin ports. Read only ports GpioClx is querying. */
+    for (Port = 0; Requested != 0; ++Port, Requested >>= 8) {
+        ULONG PortMask = Requested & 0xFF;
+        if (PortMask != 0) {
+            ULONG Pending = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Params->BankId, Port, REG_INT_STA)) & PortMask;
+            if (Pending != 0) {
+                ULONG Enabled = READ_REGISTER_ULONG((PULONG)TegraGpioReg(Ctx, Params->BankId, Port, REG_INT_ENB));
+                Active |= (ULONG64)(Pending & Enabled) << (Port * 8);
+            }
+        }
+    }
+    Params->ActiveMask = Active;
     return STATUS_SUCCESS;
 }
 
@@ -406,7 +420,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&TegraGpioParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, TegraGpioParamsPath);
     }
-    TegraGpioTrace(L"DriverVersion", 4);
+    TegraGpioTrace(L"DriverVersion", 5);
 
     WDF_DRIVER_CONFIG_INIT(&Config, TegraGpioEvtDeviceAdd);
     Config.EvtDriverUnload = TegraGpioEvtDriverUnload;
