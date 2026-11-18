@@ -48,6 +48,10 @@ function Show-Status {
       } else { $rest += ('{0}=0x{1:X}' -f $q.Name, $q.Value) }
     }
     Log ('driver trace: ' + ($rest -join ' '))
+    if ($p.Run100CapturedUtc) {
+      $capture = [DateTimeOffset]::FromUnixTimeSeconds([long]$p.Run100CapturedUtc)
+      Log ("Last requested Run100 capture began at {0:u}" -f $capture.UtcDateTime)
+    }
     foreach ($g in 'Start', 'Run0', 'Run100', 'Stop', 'ToneBefore', 'Tone') {
       if ($snap[$g]) { Log ("  {0}: {1}" -f $g, ($snap[$g] -join ' ')) }
     }
@@ -88,6 +92,14 @@ switch ($Mode) {
   'Status' { Show-Status }
   'Check' {
     $wav = Join-Path $env:windir 'Media\Windows Notify System Generic.wav'
+    # Request the delayed register and PCM samples while the check starts playback.
+    try {
+      if (-not (Test-Path $Key)) { New-Item -Path $Key -Force -ErrorAction Stop | Out-Null }
+      $until = [uint32]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 30)
+      New-ItemProperty -Path $Key -Name Run100UntilUtc -Value $until -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+    } catch {
+      Log ("Could not request the Run100 snapshot: " + $_.Exception.Message)
+    }
     Log "Listen: playing $wav through the Windows audio engine."
     try { (New-Object Media.SoundPlayer $wav).PlaySync(); Log 'play: no error' }
     catch { Log ('play: ' + $_.Exception.Message) }

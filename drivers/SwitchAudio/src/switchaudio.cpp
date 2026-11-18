@@ -75,12 +75,15 @@
  * 1.0.0.9: read the pad/clock and digital mixer state for the Lite Linux
  * initialization comparison. Record PCM peak/nonzero counts at existing
  * start/stop snapshots; this reads application audio and generates no tone.
+ *
+ * 1.0.0.10: Audio.ps1 Check requests the 100 ms register and PCM sample.
+ * Ordinary stream starts retain the immediate register snapshot.
  */
 
 #define INITGUID
 /* The STATIC_ GUID initializers of ksmedia.h leave out the Data4 braces. */
 #pragma clang diagnostic ignored "-Wmissing-braces"
-#include <ntddk.h>
+#include <ntifs.h>
 #include <portcls.h>
 #include <ksmedia.h>
 #include <ntstrsafe.h>
@@ -293,6 +296,19 @@ static ULONG SaReadParam(PCWSTR Name)
         return 0;
     }
     return Value;
+}
+
+/* Audio.ps1 Check requests the late capture for streams starting during
+   its playback. An interrupted diagnostic expires without a device restart. */
+static ULONG SaRun100CaptureTime(VOID)
+{
+    ULONG Until = SaReadParam(L"Run100UntilUtc");
+    LARGE_INTEGER Time;
+    ULONG Now;
+    if (Until == 0) return 0;
+    KeQuerySystemTime(&Time);
+    if (!RtlTimeToSecondsSince1970(&Time, &Now) || Until <= Now || Until - Now > 30) return 0;
+    return Now;
 }
 
 /* 1.0.0.2: Parameters\TestTone = 1 plays one second of 1 kHz (-18 dBFS) at the
@@ -634,9 +650,13 @@ STDMETHODIMP_(NTSTATUS) CSaStream::SetState(KSSTATE State)
         if (State == KSSTATE_RUN && Starting) {
             SaTrace(L"Runs", ++m_Runs);
             SaSnapshot(L"Run0");
-            SaSleepMs(100);
-            SaSnapshot(L"Run100");
-            SnapshotPcm(L"Run100");
+            ULONG CaptureUtc = SaRun100CaptureTime();
+            if (CaptureUtc != 0) {
+                SaSleepMs(100);
+                SaSnapshot(L"Run100");
+                SnapshotPcm(L"Run100");
+                SaTrace(L"Run100CapturedUtc", CaptureUtc);
+            }
         } else if (State == KSSTATE_STOP || State == KSSTATE_ACQUIRE) {
             if (Stopping) {
                 SaTrace(L"StopPeriods", (ULONG)StoppedPeriods);
