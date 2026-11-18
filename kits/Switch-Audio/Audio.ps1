@@ -32,6 +32,9 @@ function Show-Status {
   if ($dev.Count -eq 0) { Log 'AUD0: NOT FOUND (ACPI\SWOA0C01). Is the Switch booted with UEFI R402?' }
   foreach ($d in $dev) {
     Log ("device: {0}  name='{1}' status={2} problem={3} service={4}" -f $d.PNPDeviceID, $d.Name, $d.Status, $d.ConfigManagerErrorCode, $d.Service)
+    $version = (Get-PnpDeviceProperty -InstanceId $d.PNPDeviceID -KeyName DEVPKEY_Device_DriverVersion -ErrorAction SilentlyContinue).Data
+    $inf = (Get-PnpDeviceProperty -InstanceId $d.PNPDeviceID -KeyName DEVPKEY_Device_DriverInfPath -ErrorAction SilentlyContinue).Data
+    if ($version) { Log ("Selected driver package {0} ({1})" -f $version, $inf) }
   }
   $p = Get-ItemProperty $Key -ErrorAction SilentlyContinue
   if ($p) {
