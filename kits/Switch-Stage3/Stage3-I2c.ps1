@@ -32,9 +32,19 @@ function Show-Status {
   Log ('sc query tegra210i2c: ' + ((& sc.exe query tegra210i2c 2>&1) -join ' ' -replace '\s+', ' '))
   $p = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\tegra210i2c\Parameters' -ErrorAction SilentlyContinue
   if ($p) {
-    foreach ($bus in 'C000', 'D000', '0000') {
-      $vals = $p.PSObject.Properties | Where-Object { $_.Name -like "I2C_${bus}_*" } |
-              ForEach-Object { '{0}=0x{1:X}' -f ($_.Name -replace "^I2C_${bus}_", ''), [uint32]$_.Value }
+    $buses = $p.PSObject.Properties | ForEach-Object {
+      if ($_.Name -match '^I2C_([0-9A-F]{4})_') { $Matches[1] }
+    } | Sort-Object -Unique
+    foreach ($bus in $buses) {
+      $prefix = "I2C_${bus}_"
+      $vals = $p.PSObject.Properties | Where-Object { $_.Name.StartsWith($prefix) } |
+        ForEach-Object {
+          $name = $_.Name.Substring($prefix.Length)
+          $value = [long]$_.Value -band 0xFFFFFFFFL
+          if ($name -eq 'SelfTest_MAX77621_Vout' -and $value -eq 0xC00000BBL) {
+            'SelfTest_MAX77621_Vout=skipped (board-specific regulator)'
+          } else { '{0}=0x{1:X}' -f $name, $value }
+        }
       if ($vals) { Log ("trace I2C@7000${bus}: " + ($vals -join ' ')) }
     }
   } else { Log 'driver trace: (no Parameters key)' }

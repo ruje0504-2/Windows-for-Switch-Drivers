@@ -1,0 +1,385 @@
+{
+  "hardware": "Switch Lite HDH-001, Tegra210B01. Windows 11 ARM64 build 22621.2861, Handheld power policy.",
+  "runtime_source": "f4210eb0459ec1dfc7c7040f65b0665ca6adc21c",
+  "original_runtime_source": "ca60e5d8112bb5883292c12af525f21ae72c1b2e",
+  "previous_version": "1.0.0.5",
+  "selected_version": "1.0.0.7",
+  "package_architecture": "ARM64",
+  "unsigned_sys_sha256": "a64f1cbac4b2bde94e605a94e925d47d924109df88c0c47390b8ebe0e45b8246",
+  "candidate_package_sha256": {
+    "tegra210i2c.inf": "93c4ca9c542f49b387151a5db05e2ed960f9320d6d7bc2829145c81076f973fb",
+    "tegra210i2c.cat": "8e0e93c11b5f6e148e5ab135a72d44074accccdff87dd1f488b0a49366472f44",
+    "tegra210i2c.sys": "c7bf8fe18a95d2d5b39d3c8137ea0751eae1471969fe7699f4712f033a45ea31"
+  },
+  "change": "Return configuration and FIFO-flush timeouts to the caller before submitting packet headers. Read the SoC revision to restrict the optional MAX77621 CPU-regulator probe to original Tegra210. Report the C500 trace bank and distinguish a skipped probe in the status utility.",
+  "identity": {
+    "running_firmware": "1.09 (winx-r402)",
+    "firmware_reported_model": "Nintendo Switch (HAC-001)",
+    "fan_driver_cpu_pmic_address": 51,
+    "active_i2c5_hidrev": 74023,
+    "lite_power_profile": true
+  },
+  "before": {
+    "observed_utc": "2026-11-18T18:18:16.7811809Z",
+    "boot_utc": "2026-11-18T17:59:20.7753910Z",
+    "bus_service": "Running",
+    "buses": [
+      {
+        "inf": "oem22.inf",
+        "code": 0,
+        "version": "1.0.0.5",
+        "id": "ACPI\\SWOA0201\\1",
+        "present": true
+      },
+      {
+        "inf": "oem22.inf",
+        "code": 0,
+        "version": "1.0.0.5",
+        "id": "ACPI\\SWOA0201\\3",
+        "present": true
+      },
+      {
+        "inf": "oem22.inf",
+        "code": 0,
+        "version": "1.0.0.5",
+        "id": "ACPI\\SWOA0201\\5",
+        "present": true
+      }
+    ],
+    "active_sys_sha256": "61a7d83f635abca9bb891ad6625f8b1431f9f72cf2c5b515b7da9bfa88582445",
+    "driver_trace_version": 5,
+    "hidrev": null,
+    "entered_d0": {
+      "C000": true,
+      "C500": true,
+      "D000": true
+    },
+    "trace": {
+      "I2C_C000_SelfTest_BQ24193_Rev": 303,
+      "I2C_C000_SelfTest_TMP451_Local": 293,
+      "I2C_C000_SelfTest_TMP451_Remote": 306,
+      "I2C_D000_Errors": 1,
+      "I2C_D000_LastErrorAddr": 27,
+      "I2C_D000_LastErrorStatus": 10,
+      "I2C_D000_Nacks": 1,
+      "I2C_D000_SelfTest_MAX77620_OnOffStat": 258,
+      "I2C_D000_SelfTest_MAX77621_Vout": 3221225486,
+      "I2C_D000_Timeouts": 0
+    },
+    "consumers": [
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchrtc",
+        "id": "ACPI\\SWOA0801\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchbattery",
+        "id": "ACPI\\SWOA0314\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchfan",
+        "id": "ACPI\\SWOA0402\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchtouch",
+        "id": "ACPI\\SWOA0502\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchaudio",
+        "id": "ACPI\\SWOA0C01\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchwifi",
+        "id": "ACPI\\SWOA0D01\\0"
+      }
+    ],
+    "battery": {
+      "CapacityPercent": 72,
+      "VoltageMv": 3819,
+      "LastApplyStatus": 0,
+      "Flags": 13
+    },
+    "power": {
+      "IsLite": 1,
+      "PowerMode": 1,
+      "TempValid": 1,
+      "SocTempC": 37,
+      "BoardTempC": 36,
+      "CpuLastError": 0,
+      "RamActualKhz": 1331200
+    },
+    "emc": {
+      "LastError": 0,
+      "TransitionCount": 2304,
+      "ActualKhz": 1331200
+    },
+    "rtc": {
+      "OpenI2cStatus": 0,
+      "FirstReadStatus": 0,
+      "BootCorrectionSeconds": 17
+    },
+    "gpu_code": 0,
+    "gpu_kmd_sha256": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+    "interactive_dwm_present": true
+  },
+  "after": {
+    "observed_utc": "2026-11-18T18:24:16.7170524Z",
+    "boot_utc": "2026-11-18T18:21:09.6142620Z",
+    "bus_service": "Running",
+    "buses": [
+      {
+        "inf": "oem23.inf",
+        "code": 0,
+        "version": "1.0.0.7",
+        "id": "ACPI\\SWOA0201\\1",
+        "present": true
+      },
+      {
+        "inf": "oem23.inf",
+        "code": 0,
+        "version": "1.0.0.7",
+        "id": "ACPI\\SWOA0201\\3",
+        "present": true
+      },
+      {
+        "inf": "oem23.inf",
+        "code": 0,
+        "version": "1.0.0.7",
+        "id": "ACPI\\SWOA0201\\5",
+        "present": true
+      }
+    ],
+    "active_sys_sha256": "c7bf8fe18a95d2d5b39d3c8137ea0751eae1471969fe7699f4712f033a45ea31",
+    "driver_trace_version": 7,
+    "hidrev": 74023,
+    "entered_d0": {
+      "C000": true,
+      "C500": true,
+      "D000": true
+    },
+    "trace": {
+      "I2C_C000_SelfTest_BQ24193_Rev": 303,
+      "I2C_C000_SelfTest_TMP451_Local": 292,
+      "I2C_C000_SelfTest_TMP451_Remote": 306,
+      "I2C_D000_Errors": 0,
+      "I2C_D000_LastErrorAddr": 0,
+      "I2C_D000_LastErrorStatus": 0,
+      "I2C_D000_Nacks": 0,
+      "I2C_D000_SelfTest_MAX77620_OnOffStat": 258,
+      "I2C_D000_SelfTest_MAX77621_Vout": 3221225659,
+      "I2C_D000_Timeouts": 0
+    },
+    "consumers": [
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchrtc",
+        "id": "ACPI\\SWOA0801\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchbattery",
+        "id": "ACPI\\SWOA0314\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchfan",
+        "id": "ACPI\\SWOA0402\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchtouch",
+        "id": "ACPI\\SWOA0502\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchaudio",
+        "id": "ACPI\\SWOA0C01\\0"
+      },
+      {
+        "status": "OK",
+        "code": 0,
+        "service": "switchwifi",
+        "id": "ACPI\\SWOA0D01\\0"
+      }
+    ],
+    "battery": {
+      "CapacityPercent": 73,
+      "VoltageMv": 3791,
+      "LastApplyStatus": 0,
+      "Flags": 13
+    },
+    "power": {
+      "IsLite": 1,
+      "PowerMode": 1,
+      "TempValid": 1,
+      "SocTempC": 38,
+      "BoardTempC": 37,
+      "CpuLastError": 0,
+      "RamActualKhz": 1600000
+    },
+    "emc": {
+      "LastError": 0,
+      "TransitionCount": 221,
+      "ActualKhz": 1600000
+    },
+    "rtc": {
+      "OpenI2cStatus": 0,
+      "FirstReadStatus": 0,
+      "BootCorrectionSeconds": 20
+    },
+    "gpu_code": 0,
+    "gpu_kmd_sha256": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+    "interactive_dwm_present": true
+  },
+  "controlled_register_cases": {
+    "source_snapshot_sha256": {
+      "reference": "86de1c115428ea55c08c08a61e96c8f4bf2d3f712a8f3a64b4d33d1177ed4e1a",
+      "candidate": "8468666397670e6857f4d2adfda545304d915c0c455b96143adf45e20afd9a2f"
+    },
+    "results_sha256": "7e66eb593cfb87d2fce87f5b1ef44442f29bc6e625afe82e02a013eaa6d044ca",
+    "cases_per_build": 11,
+    "stuck_flush": {
+      "reference": {
+        "status": -4,
+        "simulated_wait_us": 40200,
+        "tx_words_accepted": 0,
+        "tx_words_issued_while_flushing": 3,
+        "bus_clears": 1,
+        "request_timeouts": 1,
+        "gate_acquires": 0,
+        "gate_releases": 0
+      },
+      "candidate": {
+        "status": -4,
+        "simulated_wait_us": 10000,
+        "tx_words_accepted": 0,
+        "tx_words_issued_while_flushing": 0,
+        "bus_clears": 1,
+        "request_timeouts": 1,
+        "gate_acquires": 0,
+        "gate_releases": 0
+      }
+    },
+    "stuck_at_prepare": {
+      "reference": {
+        "prepare_config_stuck": 0,
+        "prepare_fifo_stuck": 0
+      },
+      "candidate": {
+        "prepare_config_stuck": -4,
+        "prepare_fifo_stuck": -4
+      }
+    },
+    "revision_gate_and_d0_test_sha256": "9d6d95baf545ee73d4eb9ae28ac59e921d3eddb0ea4c9e0083dd1daa5706756c",
+    "revision_results": "Tegra210, B01, unknown revisions, mapping, I2C1/3 and gate diagnostics passed."
+  },
+  "signature": {
+    "physical_checks": [
+      {
+        "exit": 0,
+        "file": "candidate/tegra210i2c.cat"
+      },
+      {
+        "exit": 0,
+        "file": "candidate/tegra210i2c.inf"
+      },
+      {
+        "exit": 0,
+        "file": "candidate/tegra210i2c.sys"
+      },
+      {
+        "exit": 0,
+        "file": "recovery/tegra210i2c.cat"
+      },
+      {
+        "exit": 0,
+        "file": "recovery/tegra210i2c.inf"
+      },
+      {
+        "exit": 0,
+        "file": "recovery/tegra210i2c.sys"
+      }
+    ],
+    "guest_native_membership_log_sha256": "c34774fd9173b11aee35ede8720dc9dad52072def79c03cf86c83cf0dcda3c0e",
+    "guest_altered_inf_wintrust": "0x800b0100",
+    "source_file_sha256": {
+      "drivers/Tegra210I2c/src/tegra210i2c.c": "8468666397670e6857f4d2adfda545304d915c0c455b96143adf45e20afd9a2f",
+      "drivers/Tegra210I2c/tegra210i2c.inf": "93c4ca9c542f49b387151a5db05e2ed960f9320d6d7bc2829145c81076f973fb",
+      "kits/Switch-Stage3/Stage3-I2c.ps1": "b8411219becf5d7a0c07cb75ee1f372aa1bf5042c7350c8a1a930201cf1fa968",
+      "drivers/Tegra210I2c/tests/test-diagnostics.py": "9d6d95baf545ee73d4eb9ae28ac59e921d3eddb0ea4c9e0083dd1daa5706756c"
+    }
+  },
+  "selection": {
+    "deferred_pnp_flags": 64,
+    "old_bindings_after_defer_before_shutdown": [
+      "oem22.inf",
+      "oem22.inf",
+      "oem22.inf"
+    ],
+    "old_image_after_defer_before_shutdown_sha256": "61a7d83f635abca9bb891ad6625f8b1431f9f72cf2c5b515b7da9bfa88582445",
+    "requested_restart": true,
+    "native_state": "Accepted",
+    "receipt_sha256": "3298c01717056d4640ce53c76af3c32d93a31b9ebe3f458d7eec57e2bad8690a",
+    "host_ack_utc": "2026-11-18T18:24:39.6171555Z",
+    "earlier_intermediate_version_selected": false
+  },
+  "stage3_status": {
+    "script_sha256": "b8411219becf5d7a0c07cb75ee1f372aa1bf5042c7350c8a1a930201cf1fa968",
+    "scope": "Executed the published Status command on hardware and checked the three PnP instances and their trace banks.",
+    "lines": [
+      "I2C device: ACPI\\SWOA0201\\1  name='NVIDIA Tegra210 I2C Controller' status=OK problem=0 service=tegra210i2c",
+      "I2C device: ACPI\\SWOA0201\\3  name='NVIDIA Tegra210 I2C Controller' status=OK problem=0 service=tegra210i2c",
+      "I2C device: ACPI\\SWOA0201\\5  name='NVIDIA Tegra210 I2C Controller' status=OK problem=0 service=tegra210i2c",
+      "trace I2C@70000000: DriverVersion=0x7",
+      "trace I2C@7000C000: ResourceCount=0x2 CnfgBefore=0x2804 ClkDivisor=0x50001 CnfgAfter=0x2C04 SelfTest_TMP451_Local=0x124 SelfTest_TMP451_Remote=0x132 SelfTest_BQ24193_Rev=0x12F D0EntryDone=0x1",
+      "trace I2C@7000C500: ResourceCount=0x2 CnfgBefore=0x20800 ClkDivisor=0x50001 CnfgAfter=0x20C00 D0EntryDone=0x1",
+      "trace I2C@7000D000: ResourceCount=0x2 CnfgBefore=0x2840 ClkDivisor=0x50001 CnfgAfter=0x2C40 SelfTest_MAX77620_OnOffStat=0x102 Errors=0x0 Nacks=0x0 Timeouts=0x0 LastErrorStatus=0x0 LastErrorAddr=0x0 SelfTest_MAX77621_Vout=skipped (board-specific regulator) D0EntryDone=0x1 Hidrev=0x12127"
+    ]
+  },
+  "recovery": {
+    "original_package": {
+      "tegra210i2c.inf": {
+        "sha256": "EEA7FED7FA5DBDBC8DA995F5457B7056AA3BC17F2D0BCED2BAE91EA11C3990DA",
+        "length": 1090
+      },
+      "tegra210i2c.cat": {
+        "sha256": "D3A6A61BE176F973F0E77CD2A81895D1CF8AADC54CEE45652CAB2A3D08F85733",
+        "length": 2483
+      },
+      "tegra210i2c.sys": {
+        "sha256": "61A7D83F635ABCA9BB891AD6625F8B1431F9F72CF2C5B515B7DA9BFA88582445",
+        "length": 22928
+      }
+    },
+    "original_catalog_verifier": "0x80096019 TRUST_E_BASIC_CONSTRAINTS",
+    "compatible_catalog_sha256": "739b2e955dad40d5bccde01c4584608aa91f9b977df93854e850d96b5ae4af34",
+    "recovery_store": "tegra210i2c-retained.inf_arm64_41aa8eb054e41a47",
+    "physical_add_driver_exit": 0,
+    "member_verify_exit": 0,
+    "original_inf_and_sys_identical_in_both_stores": true,
+    "forced_rollback_exercised": false
+  },
+  "cleanup": {
+    "temporary_files_removed_on_device": 27,
+    "staging_directories_removed": 7,
+    "startup_recovery_task_retired": true
+  },
+  "acceptance": "Selected for daily use after the planned Windows restart. The physical result covers bus preparation, board-specific discovery and live power, charger, thermal and RTC reads. Failure injection for stuck FIFO/configuration registers used the host register model. Sleep/resume, cold power-on, and the cause of previous unexpected restarts remain open.",
+  "independent_review": "Main source review completed. Separate Gemini review is pending."
+}
