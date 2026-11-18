@@ -1,0 +1,498 @@
+{
+  "hardware": "Switch Lite, ACPI\\SWOA0C01\\0, Nintendo Switch Audio speaker path, Windows ARM64",
+  "package_versions": {
+    "reference": "1.0.0.9",
+    "candidate": "1.0.0.10"
+  },
+  "module": "drivers/SwitchAudio/src/switchaudio.cpp",
+  "source_for_selected_driver": "32b7d18807e7fbaa7cf999d1b50c954d0e39e7b1",
+  "packages": {
+    "previous": {
+      "switchaudio.sys": "05fd4e2c9dd22d340942d26edfb5e1a83639fe4fff02d14b9a3bf5e95b86aeff",
+      "switchaudio.inf": "121dd9e031c4ae0c69616533ca1cdbd328a9ad34bc2b41ece147f974dc67affd",
+      "switchaudio.cat": "49003c541449239d4feb0be798518fc41d3fdf44605b186dff6aaa99d7aea579"
+    },
+    "candidate": {
+      "switchaudio.inf": "27a30c89250f6019b1328ecdfc14114e4a48c6c4d1555020e17d41f6adbf8962",
+      "switchaudio.sys": "36a62d088d2a04dbc5c7acb97f2b7528fb568cb996a6d2b9f92f27005bbbe81b",
+      "switchaudio.cat": "7b0d5987d1972a2cc0e5af17665c07aec904f64298196ea9c660c31ae35daa92"
+    }
+  },
+  "fixture_ordinary": {
+    "name": "s5-audio-start-6b3adb00.exe",
+    "source_sha256": "4199f1e16af63f8df56b03614e5c3ff24a119ca0bf1bbe36296f0bf9b069a3cb",
+    "unsigned_sha256": "6b3adb00d2725765251d6deb3d6d50090e8914528dbb0c7b76a88a01d4655014",
+    "signed_sha256": "6818ca920b011b9cc78d1b9bbd1042da2eab4dc6d3d2eacfd1927f73089b81c6",
+    "bytes": 819728,
+    "source_commit": "a8d7056994ca67f04381e537b97f5e49fd51e517",
+    "path": "drivers/SwitchAudio/tests/wasapi-start.cpp"
+  },
+  "fixture_prefilled": {
+    "name": "s5-audio-pcm-acdc1de5.exe",
+    "signed_sha256": "4790f30e6431ec16253733141a4407ace80b322fdcaa38b85f4ba28db22a3835",
+    "source_sha256": "6dc43e4a1a2ceb918c2979a8310a4bf78836cac6975d183cd261cc0942474fe3",
+    "previous_source_sha256": "4199f1e16af63f8df56b03614e5c3ff24a119ca0bf1bbe36296f0bf9b069a3cb",
+    "unsigned_sha256": "acdc1de56a6ded6749ec32e08b81e93f0ef9ad1d92fb6f8d495679f583ebf166",
+    "bytes": 819720,
+    "path": "drivers/SwitchAudio/tests/wasapi-start.cpp"
+  },
+  "timing_method": "Seven opens of the same physical speaker controller per version. Native ARM64 WASAPI exclusive, 48 kHz 16-bit stereo, 8192 frames of silent PCM, QPC 19.2 MHz, fresh IAudioClient per cycle. The OS recreated the software endpoint ID at PnP rebind. Each side ran on its own boot with the accepted graphics KMD. Start is the duration of IAudioClient::Start; the first positive IAudioClock position was sampled after Start returned. Acoustic onset and speaker quality were not measured.",
+  "graphics_kmd_sha256": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+  "api_contracts": [
+    "https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-start",
+    "https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclock-getposition"
+  ],
+  "runs": {
+    "reference": {
+      "os_boot": "2026-11-18T17:27:14.0334990Z",
+      "first_utc": "2026-11-18T17:32:07.6040018Z",
+      "end_utc": "2026-11-18T17:32:18.2988365Z",
+      "dwm_pid": 828,
+      "endpoint_id_sha256": "e816039ed9bb8b217ea9343e3d008c109e8fe688d27835c61887778370e98b16",
+      "driver_sha256": "05fd4e2c9dd22d340942d26edfb5e1a83639fe4fff02d14b9a3bf5e95b86aeff",
+      "code_after": 0,
+      "exit": 0,
+      "streams_opened": 7,
+      "buffers_allocated": 7,
+      "before": {
+        "Runs": 1,
+        "StopAdmaXfer": 64,
+        "WaveStatus": 0,
+        "Buffers": 2,
+        "Run0AdmaTc": 1536,
+        "BufferSize": 12288,
+        "Requested": 12288,
+        "TopoStatus": 0,
+        "StopPeriods": 64,
+        "ConnectStatus": 0,
+        "Jack": 0,
+        "DriverVersion": 9,
+        "Run0AdmaXfer": 0,
+        "StopGaps": 11,
+        "Streams": 2,
+        "Stage": 3,
+        "StopPositionCalls": 46,
+        "Run0AdmaStatus": 1
+      },
+      "after": {
+        "Runs": 1,
+        "StopAdmaXfer": 22,
+        "WaveStatus": 0,
+        "Buffers": 9,
+        "Run0AdmaTc": 4096,
+        "BufferSize": 32768,
+        "Requested": 32768,
+        "TopoStatus": 0,
+        "StopPeriods": 22,
+        "ConnectStatus": 0,
+        "Jack": 0,
+        "DriverVersion": 9,
+        "Run0AdmaXfer": 0,
+        "StopGaps": 2,
+        "Streams": 9,
+        "Stage": 3,
+        "StopPositionCalls": 66,
+        "Run0AdmaStatus": 1
+      },
+      "cycles": [
+        {
+          "init_ms": 35.81,
+          "start_ms": 122.393,
+          "first_position_ms": 122.552,
+          "stop_ms": 2.508,
+          "buffer_frames": 8192,
+          "written": 29603,
+          "audio_hz": 48000,
+          "first": 5829,
+          "last": 21422,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 17.957,
+          "start_ms": 121.866,
+          "first_position_ms": 122.071,
+          "stop_ms": 2.363,
+          "buffer_frames": 8192,
+          "written": 29642,
+          "audio_hz": 48000,
+          "first": 5816,
+          "last": 21457,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 20.949,
+          "start_ms": 118.034,
+          "first_position_ms": 118.262,
+          "stop_ms": 2.363,
+          "buffer_frames": 8192,
+          "written": 29403,
+          "audio_hz": 48000,
+          "first": 5628,
+          "last": 21215,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 14.782,
+          "start_ms": 109.352,
+          "first_position_ms": 109.526,
+          "stop_ms": 2.804,
+          "buffer_frames": 8192,
+          "written": 29085,
+          "audio_hz": 48000,
+          "first": 5222,
+          "last": 20906,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 16.947,
+          "start_ms": 107.652,
+          "first_position_ms": 107.822,
+          "stop_ms": 2.784,
+          "buffer_frames": 8192,
+          "written": 28960,
+          "audio_hz": 48000,
+          "first": 5217,
+          "last": 20775,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 42.866,
+          "start_ms": 124.269,
+          "first_position_ms": 124.68,
+          "stop_ms": 19.078,
+          "buffer_frames": 8192,
+          "written": 29452,
+          "audio_hz": 48000,
+          "first": 5877,
+          "last": 21276,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 49.771,
+          "start_ms": 127.496,
+          "first_position_ms": 128.11,
+          "stop_ms": 3.496,
+          "buffer_frames": 8192,
+          "written": 30151,
+          "audio_hz": 48000,
+          "first": 5991,
+          "last": 21980,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        }
+      ],
+      "summary_ms": {
+        "init_ms": {
+          "min": 14.782,
+          "median": 20.949,
+          "max": 49.771
+        },
+        "start_ms": {
+          "min": 107.652,
+          "median": 121.866,
+          "max": 127.496
+        },
+        "first_position_ms": {
+          "min": 107.822,
+          "median": 122.071,
+          "max": 128.11
+        },
+        "stop_ms": {
+          "min": 2.363,
+          "median": 2.784,
+          "max": 19.078
+        },
+        "init_plus_start_ms": {
+          "min": 124.134,
+          "median": 139.823,
+          "max": 177.267
+        }
+      },
+      "receipt_sha256": "ac956ced90f21bad20b270d7b141a4e247955de37dd9b737fd139d7c2ea7f059"
+    },
+    "candidate": {
+      "os_boot": "2026-11-18T17:34:48.7725220Z",
+      "first_utc": "2026-11-18T17:38:11.9637519Z",
+      "end_utc": "2026-11-18T17:38:24.9281509Z",
+      "dwm_pid": 1360,
+      "endpoint_id_sha256": "c7d6c8f29c760062bd97c3f7c4ddeb1c27098dff3b11d1ef85645da0a3bec35a",
+      "driver_sha256": "36a62d088d2a04dbc5c7acb97f2b7528fb568cb996a6d2b9f92f27005bbbe81b",
+      "code_after": 0,
+      "exit": 0,
+      "streams_opened": 7,
+      "buffers_allocated": 7,
+      "before": {
+        "Runs": 1,
+        "StopAdmaXfer": 52,
+        "WaveStatus": 0,
+        "Buffers": 2,
+        "Run0AdmaTc": 1536,
+        "BufferSize": 12288,
+        "Requested": 12288,
+        "TopoStatus": 0,
+        "StopPeriods": 52,
+        "ConnectStatus": 0,
+        "Jack": 0,
+        "DriverVersion": 9,
+        "Run0AdmaXfer": 0,
+        "StopGaps": 11,
+        "Streams": 3,
+        "Stage": 3,
+        "StopPositionCalls": 45,
+        "Run0AdmaStatus": 1
+      },
+      "after": {
+        "Runs": 1,
+        "StopAdmaXfer": 16,
+        "WaveStatus": 0,
+        "Buffers": 9,
+        "Run0AdmaTc": 4096,
+        "BufferSize": 32768,
+        "Requested": 32768,
+        "TopoStatus": 0,
+        "StopPeriods": 16,
+        "ConnectStatus": 0,
+        "Jack": 0,
+        "DriverVersion": 9,
+        "Run0AdmaXfer": 0,
+        "StopGaps": 0,
+        "Streams": 10,
+        "Stage": 3,
+        "StopPositionCalls": 69,
+        "Run0AdmaStatus": 1
+      },
+      "cycles": [
+        {
+          "init_ms": 34.429,
+          "start_ms": 4.627,
+          "first_position_ms": 4.758,
+          "stop_ms": 12.1,
+          "buffer_frames": 8192,
+          "written": 24011,
+          "audio_hz": 48000,
+          "first": 153,
+          "last": 15853,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 31.015,
+          "start_ms": 11.277,
+          "first_position_ms": 11.682,
+          "stop_ms": 3.154,
+          "buffer_frames": 8192,
+          "written": 24364,
+          "audio_hz": 48000,
+          "first": 447,
+          "last": 16185,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 23.625,
+          "start_ms": 5.854,
+          "first_position_ms": 6.05,
+          "stop_ms": 2.545,
+          "buffer_frames": 8192,
+          "written": 23900,
+          "audio_hz": 48000,
+          "first": 221,
+          "last": 15713,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 36.822,
+          "start_ms": 7.482,
+          "first_position_ms": 7.769,
+          "stop_ms": 5.797,
+          "buffer_frames": 8192,
+          "written": 24518,
+          "audio_hz": 48000,
+          "first": 286,
+          "last": 16334,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 66.509,
+          "start_ms": 21.879,
+          "first_position_ms": 23.887,
+          "stop_ms": 2.479,
+          "buffer_frames": 8192,
+          "written": 24583,
+          "audio_hz": 48000,
+          "first": 1044,
+          "last": 16395,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 27.601,
+          "start_ms": 6.3,
+          "first_position_ms": 6.54,
+          "stop_ms": 9.162,
+          "buffer_frames": 8192,
+          "written": 24496,
+          "audio_hz": 48000,
+          "first": 242,
+          "last": 16335,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        },
+        {
+          "init_ms": 85.343,
+          "start_ms": 17.34,
+          "first_position_ms": 18.198,
+          "stop_ms": 3.424,
+          "buffer_frames": 8192,
+          "written": 24648,
+          "audio_hz": 48000,
+          "first": 661,
+          "last": 16462,
+          "default_period_100ns": 100000,
+          "min_period_100ns": 30000
+        }
+      ],
+      "summary_ms": {
+        "init_ms": {
+          "min": 23.625,
+          "median": 34.429,
+          "max": 85.343
+        },
+        "start_ms": {
+          "min": 4.627,
+          "median": 7.482,
+          "max": 21.879
+        },
+        "first_position_ms": {
+          "min": 4.758,
+          "median": 7.769,
+          "max": 23.887
+        },
+        "stop_ms": {
+          "min": 2.479,
+          "median": 3.424,
+          "max": 12.1
+        },
+        "init_plus_start_ms": {
+          "min": 29.479,
+          "median": 42.292,
+          "max": 102.683
+        }
+      },
+      "receipt_sha256": "b5d8e59ed90594450536dfa9e91c01e7ac99695096d00cb2ed571a6ef924159a"
+    }
+  },
+  "ordinary_start_median_reduction_ms": 114.384,
+  "ordinary_init_plus_start_median_reduction_ms": 97.531,
+  "explicit_diagnostic": {
+    "shared_soundplayer": {
+      "digital_fixture": "0.75 seconds, 300 Hz, stereo 16-bit PCM with peak amplitude 64, 48 kHz, normal shared Windows playback",
+      "fixture_sha256": "d27b2ca7a42e4cdd8f21737ca1caac3421ab7f39e21ef15c3c92fd592b12d244",
+      "capture_timestamp": 1795023572,
+      "run100_samples": 6144,
+      "run100_nonzero": 0,
+      "run100_peak": 0,
+      "stop_nonzero": 2518,
+      "stop_peak": 60,
+      "expectation_met": false,
+      "diagnostic_setting_restored": true,
+      "scope": "The explicit snapshot executed. The application returned successfully; sample activity appeared at stop. The initial expectation of nonzero shared PCM at the 100 ms snapshot was not met.",
+      "receipt_sha256": "7c5cc09d0559dd4e35dd6fccd259f8fd9d1fb3daea1c292d9dddef3caf6521ca"
+    },
+    "expired_prefilled_control": {
+      "deadline_unix": 1795023693,
+      "player_began": "2026-11-18T17:41:33.3841576Z",
+      "snapshot_timestamp_unchanged": true,
+      "stop_pcm_samples_nonzero": 16384,
+      "stop_pcm_peak": 32,
+      "receipt_sha256": "6f0d81d61baefba791869c5cb71fc459d963a7ada7a0763a46ffb70b071a2934",
+      "scope": "The interactive process was delayed until the end of the original 30-second window. The normal Start returned and the driver preserved the preceding capture. The positive control arms the same window after the signed client signals readiness."
+    },
+    "exclusive_prefilled": {
+      "signal": "Both channels alternate +32/-32 with 96 frames per half period; supplied before Start.",
+      "capture_timestamp": 1795023745,
+      "run100_samples": 16384,
+      "run100_nonzero": 16384,
+      "run100_peak": 32,
+      "hardware_transfer_counter": 4,
+      "exit": 0,
+      "stdout": [
+        "FORMAT exclusive 48000 16 2 pcm32 QPC=19200000",
+        "CYCLE 0 init_ms=20.898 start_ms=107.659 first_position_ms=107.811 stop_ms=1.663 buffer_frames=8192 written=29381 audio_hz=48000 first=5204 last=21193 default_period_100ns=100000 min_period_100ns=30000"
+      ],
+      "diagnostic_setting_restored": true,
+      "receipt_sha256": "f3ce8f826e8a0f4c4f93621fae6a4e6dc9e29e5c578228cae9bf39ba33beabaf"
+    }
+  },
+  "status_reporting": {
+    "actual_driver_version": "1.0.0.10",
+    "selected_inf": "oem17.inf",
+    "legacy_driver_trace_tag": 9,
+    "script_sha256": "3637b207a3c36ee50554e174b867aacc4ed81bb604566df588052c94d193c102",
+    "observed_line": "Selected driver package 1.0.0.10 (oem17.inf)"
+  },
+  "native_selection": {
+    "previous_inf": "oem9.inf",
+    "candidate_inf": "oem17.inf",
+    "pnp_update_succeeded": true,
+    "windows_requested_restart": true,
+    "candidate_ready_boot": "2026-11-18T17:34:48.7725220Z",
+    "driver_running": true,
+    "gpu_code": 0,
+    "audio_code": 0,
+    "handheld_mode": 1,
+    "external_power": true,
+    "verified_package_and_recovery_catalog_entries": 6,
+    "pnpsigned_selection_sha256": "9bb5f2d9074c2eee3afd0c8a7237bb56dccb3d1620a224dc5576a9908e9f1bae"
+  },
+  "boot_incident": {
+    "stage": "After selection, before candidate measurements",
+    "recorded_planned_reboot_request": false,
+    "event41": [
+      {
+        "record": 66568,
+        "bugcheck_code": "0",
+        "long_power_button": "false"
+      }
+    ],
+    "event6008": [
+      66559
+    ],
+    "conclusion": "Windows requested a restart when selecting the driver. The controller could not connect to issue its planned restart; the device subsequently recorded an unexpected shutdown. The cause is open. The candidate workload measurements came from the next boot."
+  },
+  "build": {
+    "compiler": "llvm-mingw aarch64-w64-mingw32-clang++",
+    "options": [
+      "-std=c++17",
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-static",
+      "-municode",
+      "wasapi-start.cpp",
+      "-lole32",
+      "-luuid",
+      "-lpropsys",
+      "-Wl,--no-insert-timestamp",
+      "-o",
+      "wasapi-start.exe"
+    ],
+    "run": "Use --list for endpoint discovery, --run <endpoint-id> for the seven silent starts and --signal <endpoint-id> for the prefilled diagnostic. Preserve the existing volume and diagnostic deadline."
+  },
+  "acceptance": {
+    "selected_version": "1.0.0.10",
+    "extent": "Ordinary stream startup, progressing device clock, digital PCM transport and explicit diagnostic capture. Acoustic quality was not measured. The unplanned reboot after PnP selection is tracked independently.",
+    "recovery_package_verified": true,
+    "hardware_rollback_exercised": false,
+    "independent_review": "Main review and physical measurement completed. Separate Gemini review of the audio change remains pending."
+  }
+}

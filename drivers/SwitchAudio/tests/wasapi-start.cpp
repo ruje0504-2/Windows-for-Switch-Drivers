@@ -3,6 +3,7 @@
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <cstdio>
+#include <cstdint>
 #include <cwchar>
 #include <string>
 #include <vector>
@@ -53,13 +54,21 @@ static void list_devices(IMMDeviceEnumerator *enumerator) {
         CoTaskMemFree(id);
     }
 }
-static void queue_silence(IAudioRenderClient *render,UINT32 frames) {
+static void queue_frames(IAudioRenderClient *render,UINT32 frames,bool signal,UINT64 frame_offset) {
     if (!frames) return;
     BYTE *data=nullptr;
     require(render->GetBuffer(frames,&data),"get_render_buffer");
-    require(render->ReleaseBuffer(frames,AUDCLNT_BUFFERFLAGS_SILENT),"release_silent_frames");
+    if (signal) {
+        auto *pcm=reinterpret_cast<std::int16_t*>(data);
+        for (UINT32 n=0; n<frames; ++n) {
+            const std::int16_t sample=((frame_offset+n)/96)%2 ? 32 : -32;
+            pcm[2*n]=sample;
+            pcm[2*n+1]=sample;
+        }
+    }
+    require(render->ReleaseBuffer(frames,signal?0:AUDCLNT_BUFFERFLAGS_SILENT),"release_render_frames");
 }
-static void run_cycle(IMMDevice *device, unsigned cycle, LONGLONG hz) {
+static void run_cycle(IMMDevice *device, unsigned cycle, LONGLONG hz, bool signal) {
     Interface<IAudioClient> client;
     require(device->Activate(__uuidof(IAudioClient),CLSCTX_INPROC_SERVER,nullptr,client.out()),"activate");
     WAVEFORMATEX format={WAVE_FORMAT_PCM,2,48000,192000,4,16,0};
@@ -84,7 +93,7 @@ static void run_cycle(IMMDevice *device, unsigned cycle, LONGLONG hz) {
     require(client->GetService(__uuidof(IAudioRenderClient),render.out()),"render_service");
     require(client->GetService(__uuidof(IAudioClock),clock.out()),"audio_clock_service");
     UINT64 clock_hz=0;require(clock->GetFrequency(&clock_hz),"get_audio_clock_rate");
-    queue_silence(render.value,frames);
+    queue_frames(render.value,frames,signal,0);
     const LONGLONG start=counter();
     require(client->Start(),"start");
     const LONGLONG started=counter();
@@ -93,7 +102,7 @@ static void run_cycle(IMMDevice *device, unsigned cycle, LONGLONG hz) {
         do {
             UINT32 padding=0;require(client->GetCurrentPadding(&padding),"get_padding");
             if (padding>frames) throw DiagnosticError{"invalid_padding",E_UNEXPECTED};
-            queue_silence(render.value,frames-padding);written+=frames-padding;
+            queue_frames(render.value,frames-padding,signal,written);written+=frames-padding;
             HRESULT read=clock->GetPosition(&pos,nullptr);
             require(read,"read_position");
             if (read==S_OK && pos && !first_seen) { first_seen=counter();first_pos=pos; }
@@ -118,11 +127,13 @@ int wmain(int argc,wchar_t **argv) {
         Interface<IMMDeviceEnumerator> enumerator;
         require(CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_INPROC_SERVER,__uuidof(IMMDeviceEnumerator),enumerator.out()),"create_enumerator");
         if(argc==2 && !std::wcscmp(argv[1],L"--list")) list_devices(enumerator.value);
-        else if(argc==3 && !std::wcscmp(argv[1],L"--run")) {
+        else if(argc==3 && (!std::wcscmp(argv[1],L"--run") || !std::wcscmp(argv[1],L"--signal"))) {
+            const bool signal=!std::wcscmp(argv[1],L"--signal");
             Interface<IMMDevice> device;require(enumerator->GetDevice(argv[2],&device.value),"select_endpoint");
             LARGE_INTEGER hz;QueryPerformanceFrequency(&hz);
-            std::printf("FORMAT exclusive 48000 16 2 silent QPC=%lld\n",hz.QuadPart);
-            for(unsigned i=0;i<7;++i){run_cycle(device.value,i,hz.QuadPart);Sleep(250);}
+            std::printf("FORMAT exclusive 48000 16 2 %s QPC=%lld\n",signal?"pcm32":"silent",hz.QuadPart);
+            const unsigned cycles=signal?1:7;
+            for(unsigned i=0;i<cycles;++i){run_cycle(device.value,i,hz.QuadPart,signal);Sleep(250);}
         } else exit_code=2;
     } catch (const DiagnosticError& err) {
         std::printf("ERROR %s 0x%08lx\n",err.operation,static_cast<unsigned long>(err.status));exit_code=4;
