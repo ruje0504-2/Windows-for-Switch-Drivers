@@ -1,0 +1,539 @@
+{
+  "component": "switchrtc",
+  "hardware_id": "ACPI\\SWOA0801\\0",
+  "version": "1.0.0.4",
+  "qualified_on": "Switch Lite / Windows ARM64",
+  "observed_at_utc": "2026-11-18T20:42:20.0780236Z",
+  "previous_version": "1.0.0.3",
+  "previous_source": "5f531e6f2ddb82570c0368eebbf2c73b9deaec03",
+  "previous_signed_sys_sha256": "b9e7849cc71af7a7762a5b40a5cb29ca4410c5b156936ce6747fd29f2470d1b2",
+  "candidate_package_sha256": {
+    "switchrtc.sys": "169164193d731756791d476894c67751c87ceef27d5c14b7aa3a47b9556de797",
+    "switchrtc.inf": "47af38fc654da719d1841c349dfa2704219a459615662eb879edeab89d9aee78",
+    "switchrtc.cat": "03aeeac0f696cd7f0d4f2cec50555348f0a37658c5cc1aa53a3772860106816e"
+  },
+  "rollback_package_sha256": {
+    "switchrtc.sys": "b9e7849cc71af7a7762a5b40a5cb29ca4410c5b156936ce6747fd29f2470d1b2",
+    "switchrtc.inf": "100bc32a4f1304a7218ce453e4a2b3a6a7a5827558509857bf12afac79a39057",
+    "switchrtc.cat": "93e2464d07e6d0b4284151298186f492b9afd237f6b2d65d4c791266d4f1adf7"
+  },
+  "source_reproduction": {
+    "fresh_unsigned": "9cd9a66a136a5eadf629575c03e6fa34833bb7a0529f43fdf617fa966e6dd782",
+    "exact_candidate_reproduced": true,
+    "runtime_source_sha256": "e5ddd521387e96ec2079186039552eac06bbfaa9946f72fb255f49e9da36db12",
+    "source_reference_commit": "5f531e6f2ddb82570c0368eebbf2c73b9deaec03"
+  },
+  "previous_image_reproduced_after_excluding_pe_signature_and_checksum": true,
+  "stage_catalog_checks": [
+    {
+      "exit": 0,
+      "file": "switchrtc.cat"
+    },
+    {
+      "exit": 0,
+      "file": "switchrtc.sys"
+    },
+    {
+      "exit": 0,
+      "file": "switchrtc-accepted.inf"
+    },
+    {
+      "exit": 0,
+      "file": "switchrtc.cat"
+    },
+    {
+      "exit": 0,
+      "file": "switchrtc.sys"
+    },
+    {
+      "exit": 0,
+      "file": "switchrtc.inf"
+    }
+  ],
+  "control_method": "The Switch ran signed ARM64 programs with the production callback bodies compiled against deterministic I/O, time and HID substitutes. The same case rows were reproduced with a native host compiler. The physical KMDF tests are recorded separately.",
+  "control_code": "tools/tests/test-pmic-button-clock.py",
+  "control_run": {
+    "utc": "2026-11-18T20:20:21.3982236Z",
+    "boot": "2026-11-18T20:07:14.7060760Z",
+    "cases": {
+      "reference": {
+        "matched": 8,
+        "total": 15,
+        "cases": {
+          "zero": {
+            "actual": 0,
+            "expected": 0
+          },
+          "positive_under_half": {
+            "actual": 0,
+            "expected": 0
+          },
+          "negative_under_half": {
+            "actual": 0,
+            "expected": 0
+          },
+          "positive_half": {
+            "actual": 1,
+            "expected": 1
+          },
+          "negative_half": {
+            "actual": 0,
+            "expected": -1
+          },
+          "positive_one_second": {
+            "actual": 1,
+            "expected": 1
+          },
+          "negative_one_second": {
+            "actual": 0,
+            "expected": -1
+          },
+          "negative_one_and_half": {
+            "actual": -1,
+            "expected": -2
+          },
+          "positive_one_and_half": {
+            "actual": 2,
+            "expected": 2
+          },
+          "negative_whole_timezone": {
+            "actual": -28799,
+            "expected": -28800
+          },
+          "positive_whole_timezone": {
+            "actual": 28800,
+            "expected": 28800
+          },
+          "negative_day_fraction": {
+            "actual": -86400,
+            "expected": -86401
+          },
+          "negative_below_whole": {
+            "actual": -2,
+            "expected": -3
+          },
+          "negative_above_whole": {
+            "actual": -2,
+            "expected": -3
+          },
+          "read_failure_preserves_offset": {
+            "actual": 77,
+            "expected": 77
+          }
+        },
+        "arm64_signed_probe_sha256": "8cedad34628837211c5dd214c1ce3dd7968ab75ab720a9230f6cb7baddb49a03"
+      },
+      "candidate": {
+        "matched": 15,
+        "total": 15,
+        "cases": {
+          "zero": {
+            "actual": 0,
+            "expected": 0
+          },
+          "positive_under_half": {
+            "actual": 0,
+            "expected": 0
+          },
+          "negative_under_half": {
+            "actual": 0,
+            "expected": 0
+          },
+          "positive_half": {
+            "actual": 1,
+            "expected": 1
+          },
+          "negative_half": {
+            "actual": -1,
+            "expected": -1
+          },
+          "positive_one_second": {
+            "actual": 1,
+            "expected": 1
+          },
+          "negative_one_second": {
+            "actual": -1,
+            "expected": -1
+          },
+          "negative_one_and_half": {
+            "actual": -2,
+            "expected": -2
+          },
+          "positive_one_and_half": {
+            "actual": 2,
+            "expected": 2
+          },
+          "negative_whole_timezone": {
+            "actual": -28800,
+            "expected": -28800
+          },
+          "positive_whole_timezone": {
+            "actual": 28800,
+            "expected": 28800
+          },
+          "negative_day_fraction": {
+            "actual": -86401,
+            "expected": -86401
+          },
+          "negative_below_whole": {
+            "actual": -3,
+            "expected": -3
+          },
+          "negative_above_whole": {
+            "actual": -3,
+            "expected": -3
+          },
+          "read_failure_preserves_offset": {
+            "actual": 77,
+            "expected": 77
+          }
+        },
+        "arm64_signed_probe_sha256": "edfc60eb02b99dcbc745335adf4cd0333fd33ed47eadd9c97c356816ae37a254"
+      }
+    }
+  },
+  "settled_desktop": {
+    "utc": "2026-11-18T20:42:20.0780236Z",
+    "boot": "2026-11-18T20:39:29.8023230Z",
+    "devices": [
+      {
+        "code": 0,
+        "name": "tegra210i2c",
+        "id": "ACPI\\SWOA0201\\1"
+      },
+      {
+        "code": 0,
+        "name": "tegra210i2c",
+        "id": "ACPI\\SWOA0201\\3"
+      },
+      {
+        "code": 0,
+        "name": "tegra210i2c",
+        "id": "ACPI\\SWOA0201\\5"
+      },
+      {
+        "code": 0,
+        "name": "switchpwrbtn",
+        "id": "ACPI\\SWOA0601\\0"
+      },
+      {
+        "code": 0,
+        "name": "tegragpurender",
+        "id": "ACPI\\SWOA0F01\\0"
+      },
+      {
+        "code": 0,
+        "name": "nvtsdhc",
+        "id": "ACPI\\NVDA0101\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchbattery",
+        "id": "ACPI\\SWOA0314\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchaudio",
+        "id": "ACPI\\SWOA0C01\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchfan",
+        "id": "ACPI\\SWOA0402\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchrtc",
+        "id": "ACPI\\SWOA0801\\0"
+      },
+      {
+        "code": 0,
+        "name": "tegra210gpio",
+        "id": "ACPI\\SWOA0101\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchwifi",
+        "id": "ACPI\\SWOA0D01\\0"
+      }
+    ],
+    "system_hid": [
+      {
+        "id": "HID\\HID_DEVICE_SYSTEM_VHF\\4&126EB1C1&0&0000",
+        "name": "HID-compliant system controller",
+        "hardware": [
+          "HID\\HID_DEVICE_SYSTEM_VHF",
+          "HID\\VID_057E&PID_5601",
+          "HID\\VID_057E&UP:0001_U:0080",
+          "HID_DEVICE_SYSTEM_CONTROL",
+          "HID_DEVICE_UP:0001_U:0080",
+          "HID_DEVICE"
+        ],
+        "compatible": [
+          null
+        ],
+        "parent": "VHF\\HID_DEVICE_SYSTEM_VHF\\3&2e052a67&0&{b132c5c0-95e3-5225-a61a-5bf3936ccbb1}",
+        "code": 0
+      },
+      {
+        "id": "VHF\\HID_DEVICE_SYSTEM_VHF\\3&2E052A67&0&{B132C5C0-95E3-5225-A61A-5BF3936CCBB1}",
+        "name": "Virtual HID Framework (VHF) HID device",
+        "hardware": [
+          "HID_DEVICE_SYSTEM_VHF",
+          "VHF\\VID_057E&PID_5601"
+        ],
+        "compatible": [
+          null
+        ],
+        "parent": "ACPI\\SWOA0601\\0",
+        "code": 0
+      }
+    ],
+    "dwm_module_sha256": {
+      "TegraGpuD3DVk.dll": "ded6fa4affec0f18773503d282f9b44939090488202ef5f25ea1d879dd862f0d",
+      "libvulkan_nouveau.dll": "e563a81d6196c91dde95aaa112ff410c3b32f07ebf9754609428c34f27e52934"
+    },
+    "gpu_kmd_sha256": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+    "application_loader_settings_sha256": "e273b17805e5df8e8f0709d9cf3e4bb70a624e2c644cb40899cc7baf60b332d6",
+    "pacecar_settings_sha256": "9b44f2e1666c9d603180972b551797a2dec76326f73bc6693db0d3626a37bfa7",
+    "pacecar_backup_sha256": "710c6b79e1e5e7cb82311732d4d34adef76a6bf721573dd6bbd470eca95bbf35",
+    "power_mode": 1,
+    "external_power": true,
+    "temperature_c": 38,
+    "cpu_last_error": 0,
+    "emc_transitions": 148,
+    "emc_last_error": 0,
+    "i2c": {
+      "timeouts": 0,
+      "nacks": 0,
+      "errors": 0,
+      "version": 7
+    },
+    "sd": {
+      "actual_khz": 199680,
+      "adma_errors": 0
+    }
+  },
+  "cleanup": {
+    "retired_one_shot_tasks": 2,
+    "removed_device_trial_files": 24,
+    "on_device_recovery_kit": "C:\\ProgramData\\SwitchWOA\\DriverReview\\s5-rtc-button-drivers-584620b39e",
+    "mac_transfer_and_vm_temporary_bytes": 387944981
+  },
+  "change": "Round signed Windows-minus-RTC tick deltas to the nearest second symmetrically. Half-second ties go away from zero. The kernel callback lifecycle comes from the identified in-use 1.0.0.3 source.",
+  "hot_select_restore_select": [
+    {
+      "utc": "2026-11-18T20:26:09.0042942Z",
+      "boot": "2026-11-18T20:07:14.7060760Z",
+      "oem": "oem141.inf",
+      "inf_sha": "47AF38FC654DA719D1841C349DFA2704219A459615662EB879EDEAB89D9AEE78",
+      "sys": "169164193D731756791D476894C67751C87CEEF27D5C14B7AA3A47B9556DE797",
+      "version": "1.0.0.4",
+      "code": 0,
+      "parameters": {
+        "OpenI2cStatus": "0",
+        "RestoreResult": "2",
+        "FirstReadStatus": "0",
+        "RtcControl": "2",
+        "Learns": "2",
+        "BootCorrectionSeconds": "0",
+        "RtcRaw1": "1186315",
+        "DriverVersion": "4",
+        "OffsetFormat": "2",
+        "LastLearnStatus": "0",
+        "OffsetSeconds": "0",
+        "CallbackRegistered": "1",
+        "RtcRaw0": "139729417"
+      },
+      "decoded_pmic_calendar_utc": "2026-11-18T20:26:09+00:00"
+    },
+    {
+      "utc": "2026-11-18T20:26:26.7550895Z",
+      "boot": "2026-11-18T20:07:14.7060760Z",
+      "oem": "oem24.inf",
+      "inf_sha": "100BC32A4F1304A7218CE453E4A2B3A6A7A5827558509857BF12AFAC79A39057",
+      "sys": "B9E7849CC71AF7A7762A5B40A5CB29CA4410C5B156936CE6747FD29F2470D1B2",
+      "version": "1.0.0.3",
+      "code": 0,
+      "parameters": {
+        "OpenI2cStatus": "0",
+        "RestoreResult": "2",
+        "FirstReadStatus": "0",
+        "RtcControl": "2",
+        "Learns": "2",
+        "BootCorrectionSeconds": "0",
+        "RtcRaw1": "1186315",
+        "DriverVersion": "3",
+        "OffsetFormat": "2",
+        "LastLearnStatus": "0",
+        "OffsetSeconds": "0",
+        "CallbackRegistered": "1",
+        "RtcRaw0": "139729434"
+      },
+      "decoded_pmic_calendar_utc": "2026-11-18T20:26:26+00:00"
+    },
+    {
+      "utc": "2026-11-18T20:26:47.5813506Z",
+      "boot": "2026-11-18T20:07:14.7060760Z",
+      "oem": "oem141.inf",
+      "inf_sha": "47AF38FC654DA719D1841C349DFA2704219A459615662EB879EDEAB89D9AEE78",
+      "sys": "169164193D731756791D476894C67751C87CEEF27D5C14B7AA3A47B9556DE797",
+      "version": "1.0.0.4",
+      "code": 0,
+      "parameters": {
+        "OpenI2cStatus": "0",
+        "RestoreResult": "2",
+        "FirstReadStatus": "0",
+        "RtcControl": "2",
+        "Learns": "2",
+        "BootCorrectionSeconds": "0",
+        "RtcRaw1": "1186315",
+        "DriverVersion": "4",
+        "OffsetFormat": "2",
+        "LastLearnStatus": "0",
+        "OffsetSeconds": "0",
+        "CallbackRegistered": "1",
+        "RtcRaw0": "139729455"
+      },
+      "decoded_pmic_calendar_utc": "2026-11-18T20:26:47+00:00"
+    }
+  ],
+  "after_ordinary_restarts": [
+    {
+      "utc": "2026-11-18T20:33:07.7341040Z",
+      "boot": "2026-11-18T20:30:36.8504970Z",
+      "parameters": {
+        "CallbackOpenStatus": "0",
+        "RestoreResult": "3",
+        "FirstReadStatus": "0",
+        "RtcControl": "2",
+        "CallbackRegistered": "1",
+        "BootCorrectionSeconds": "20",
+        "Learns": "2",
+        "DriverVersion": "4",
+        "OffsetFormat": "2",
+        "RtcRaw1": "1186315",
+        "OffsetSeconds": "1",
+        "LastLearnStatus": "0",
+        "RtcRaw0": "139730978"
+      },
+      "last_sample_pmic_utc": "2026-11-18T20:32:34+00:00",
+      "kernel_general_clock_events": [
+        {
+          "record": 67544,
+          "TimeDeltaInMs": "5",
+          "utc": "2026-11-18T20:32:34.5118373Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:32:34.5058584Z",
+          "NewTime": "2026-11-18T20:32:34.5110421Z"
+        },
+        {
+          "record": 67540,
+          "TimeDeltaInMs": "3",
+          "utc": "2026-11-18T20:31:38.1451889Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:31:38.1407366Z",
+          "NewTime": "2026-11-18T20:31:38.1447068Z"
+        }
+      ]
+    },
+    {
+      "utc": "2026-11-18T20:42:20.0780236Z",
+      "boot": "2026-11-18T20:39:29.8023230Z",
+      "parameters": {
+        "CallbackOpenStatus": "0",
+        "RestoreResult": "3",
+        "FirstReadStatus": "0",
+        "RtcControl": "2",
+        "CallbackRegistered": "1",
+        "BootCorrectionSeconds": "25",
+        "Learns": "4",
+        "DriverVersion": "4",
+        "OffsetFormat": "2",
+        "RtcRaw1": "1186315",
+        "OffsetSeconds": "0",
+        "LastLearnStatus": "0",
+        "RtcRaw0": "139733276"
+      },
+      "last_sample_pmic_utc": "2026-11-18T20:41:28+00:00",
+      "kernel_general_clock_events": [
+        {
+          "record": 67637,
+          "TimeDeltaInMs": "0",
+          "utc": "2026-11-18T20:41:28.0169592Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:41:28.0152830Z",
+          "NewTime": "2026-11-18T20:41:28.0160613Z"
+        },
+        {
+          "record": 67633,
+          "TimeDeltaInMs": "3",
+          "utc": "2026-11-18T20:40:51.2246863Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:40:51.2210426Z",
+          "NewTime": "2026-11-18T20:40:51.2242317Z"
+        },
+        {
+          "record": 67631,
+          "TimeDeltaInMs": "2",
+          "utc": "2026-11-18T20:40:33.5884949Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:40:33.5857932Z",
+          "NewTime": "2026-11-18T20:40:33.5880954Z"
+        },
+        {
+          "record": 67628,
+          "TimeDeltaInMs": "-1426",
+          "utc": "2026-11-18T20:40:33.5861786Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:40:35.0126671Z",
+          "NewTime": "2026-11-18T20:40:33.5857932Z"
+        },
+        {
+          "record": 67544,
+          "TimeDeltaInMs": "5",
+          "utc": "2026-11-18T20:32:34.5118373Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:32:34.5058584Z",
+          "NewTime": "2026-11-18T20:32:34.5110421Z"
+        },
+        {
+          "record": 67540,
+          "TimeDeltaInMs": "3",
+          "utc": "2026-11-18T20:31:38.1451889Z",
+          "Reason": "1",
+          "OldTime": "2026-11-18T20:31:38.1407366Z",
+          "NewTime": "2026-11-18T20:31:38.1447068Z"
+        }
+      ]
+    }
+  ],
+  "rollback": {
+    "original": "oem28.inf",
+    "original_catalog_trust": "UnknownError",
+    "original_sys_trust": "UnknownError",
+    "original_catalog_sha256": "dca93ff8e88590e8d45b6f63d611524ae73db389915e10b11f1ee79f6c64b793",
+    "trusted_alias": "switchrtc-accepted.inf",
+    "loaded_rollback_oem": "oem24.inf",
+    "exact_prior_sys": true
+  },
+  "scope": "Negative deltas were exercised in the ARM64 control. The real RTC was sampled and learned from normal Windows clock callbacks. No system clock or RTC was set for the test. Charging-state suspend, system-level S0 wake, S4 and SC7 are outside these observations.",
+  "independent_review": "Pending separate Gemini review.",
+  "post_boot_driver_store": {
+    "utc": "2026-11-18T20:41:37.7439263Z",
+    "binding": {
+      "service": "switchrtc",
+      "version": "1.0.0.4",
+      "oem": "oem141.inf",
+      "active_sys": "169164193D731756791D476894C67751C87CEEF27D5C14B7AA3A47B9556DE797",
+      "members": {
+        "switchrtc.cat": "03AEEAC0F696CD7F0D4F2CEC50555348F0A37658C5CC1AA53A3772860106816E",
+        "switchrtc.inf": "47AF38FC654DA719D1841C349DFA2704219A459615662EB879EDEAB89D9AEE78",
+        "switchrtc.sys": "169164193D731756791D476894C67751C87CEEF27D5C14B7AA3A47B9556DE797"
+      },
+      "file_repository": "switchrtc.inf_arm64_da4c868ee1327a36",
+      "id": "ACPI\\SWOA0801\\0",
+      "code": 0
+    }
+  }
+}

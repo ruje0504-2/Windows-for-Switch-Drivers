@@ -46,6 +46,9 @@ typedef struct _SWPWR_DEVICE {
     VHFHANDLE Vhf;
     volatile BOOLEAN Stopping;
     struct swpwr_button_state Button;
+    /* ONOFFIRQ clears on read. Keep a press if the following level read fails. */
+    BOOLEAN PendingPress;
+    BOOLEAN PendingDisplayOff;
     KSPIN_LOCK TimerLock;
     PVOID DisplayCallback;
     volatile LONG DisplayOff;
@@ -237,12 +240,19 @@ VOID SwPwrEvtTimer(WDFTIMER Timer)
     Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Irq);
     if (NT_SUCCESS(Status)) {
         Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFSTAT, &Stat);
+        if (!NT_SUCCESS(Status) && (Irq & ONOFFIRQ_EN0_R) && !Dev->PendingPress) {
+            Dev->PendingPress = TRUE;
+            Dev->PendingDisplayOff = InterlockedCompareExchange(&Dev->DisplayOff, 0, 0) != 0;
+        }
     }
     if (NT_SUCCESS(Status)) {
         Dev->Failures = 0;
         Held = (Stat & ONOFFSTAT_EN0) != 0;
-        struct swpwr_button_event Event=swpwr_button_update(&Dev->Button,Held,
-            (Irq&ONOFFIRQ_EN0_R)!=0,InterlockedCompareExchange(&Dev->DisplayOff,0,0)!=0);
+        BOOLEAN displayOff = Dev->PendingPress ? Dev->PendingDisplayOff :
+            InterlockedCompareExchange(&Dev->DisplayOff, 0, 0) != 0;
+        struct swpwr_button_event Event = swpwr_button_update(&Dev->Button, Held,
+            Dev->PendingPress || (Irq & ONOFFIRQ_EN0_R) != 0, displayOff);
+        Dev->PendingPress = FALSE;
         if (Event.emit) {
             if (Event.buttons) SwPwrTrace(L"Presses",(ULONG)InterlockedIncrement(&Dev->Presses));
             SwPwrReport(Dev,Event.buttons);
@@ -257,7 +267,9 @@ VOID SwPwrEvtTimer(WDFTIMER Timer)
     }
     if ((InterlockedIncrement(&Dev->Polls) % 200) == 0) {
         SwPwrTrace(L"Polls", (ULONG)Dev->Polls);
-        SwPwrTrace(L"LastOnOffStat", Stat);
+        if (NT_SUCCESS(Status)) {
+            SwPwrTrace(L"LastOnOffStat", Stat);
+        }
     }
     KeAcquireSpinLock(&Dev->TimerLock,&Irql);
     if (!Dev->Stopping) {
@@ -306,9 +318,11 @@ NTSTATUS SwPwrEvtSelfManagedIoInit(WDFDEVICE Device)
     if (!NT_SUCCESS(Status)) {
         return Status;
     }
-    (VOID)SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Irq);    /* drop edges latched before Windows */
+    Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Irq);
+    SwPwrTrace(L"BootIrqReadStatus", (ULONG)Status);
     SwPwrTrace(L"OnOffStatAtStart", Stat);
-    SwPwrTrace(L"OnOffIrqAtStart", Irq);
+    /* The register is one byte. MAXULONG denotes a failed read on this start. */
+    SwPwrTrace(L"OnOffIrqAtStart", NT_SUCCESS(Status) ? Irq : MAXULONG);
     Dev->Button.suppress_held = (Stat & ONOFFSTAT_EN0) != 0;
 
     if (Dev->Vhf == NULL) {
@@ -317,7 +331,7 @@ NTSTATUS SwPwrEvtSelfManagedIoInit(WDFDEVICE Device)
         Config.VhfClientContext = Dev;
         Config.VendorID = 0x057E;       /* Nintendo */
         Config.ProductID = 0x5601;
-        Config.VersionNumber = 0x0007;
+        Config.VersionNumber = 0x0008;
         Status = VhfCreate(&Config, &Dev->Vhf);
         SwPwrTrace(L"VhfCreateStatus", (ULONG)Status);
         if (!NT_SUCCESS(Status)) {
@@ -367,6 +381,7 @@ NTSTATUS SwPwrEvtSuspend(WDFDEVICE Device)
     if (Dev->Timer) WdfTimerStop(Dev->Timer,TRUE);
     if (Dev->Button.held && Dev->Vhf) SwPwrReport(Dev,0);
     Dev->Button.held=false;
+    Dev->PendingPress=FALSE;
     SwPwrTrace(L"Suspended",1);
     return STATUS_SUCCESS;
 }
@@ -380,6 +395,7 @@ NTSTATUS SwPwrEvtRestart(WDFDEVICE Device)
     SwPwrTrace(L"ResumeReadStatus",(ULONG)Status);
     if (!NT_SUCCESS(Status)) return Status;
     Dev->Button.held=false;
+    Dev->PendingPress=FALSE;
     Dev->Button.suppress_held=(Stat&ONOFFSTAT_EN0)!=0;
     SwPwrTrace(L"Suspended",0);
     KeAcquireSpinLock(&Dev->TimerLock,&Irql);
@@ -451,7 +467,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwPwrParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwPwrParamsPath);
     }
-    SwPwrTrace(L"DriverVersion", 7);
+    SwPwrTrace(L"DriverVersion", 8);
     WDF_DRIVER_CONFIG_INIT(&Config, SwPwrEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);
 }

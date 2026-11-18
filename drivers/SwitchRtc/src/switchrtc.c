@@ -52,6 +52,8 @@ EVT_WDF_DRIVER_DEVICE_ADD SwRtcEvtDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE SwRtcEvtPrepareHardware;
 EVT_WDF_DEVICE_SELF_MANAGED_IO_INIT SwRtcEvtSelfManagedIoInit;
 EVT_WDF_DEVICE_SELF_MANAGED_IO_CLEANUP SwRtcEvtSelfManagedIoCleanup;
+EVT_WDF_DEVICE_SELF_MANAGED_IO_SUSPEND SwRtcEvtSuspend;
+EVT_WDF_DEVICE_SELF_MANAGED_IO_RESTART SwRtcEvtRestart;
 EVT_WDF_WORKITEM SwRtcEvtLearnWork;
 CALLBACK_FUNCTION SwRtcTimeChanged;
 
@@ -240,7 +242,14 @@ VOID SwRtcEvtLearnWork(WDFWORKITEM WorkItem)
         return;
     }
     KeQuerySystemTime(&Now);
-    Offset = (Now.QuadPart - Rtc.QuadPart + TICKS_PER_SECOND / 2) / TICKS_PER_SECOND;
+    const LONGLONG delta = Now.QuadPart - Rtc.QuadPart;
+    const LONGLONG fraction = delta % TICKS_PER_SECOND;
+    Offset = delta / TICKS_PER_SECOND;
+    if (fraction >= TICKS_PER_SECOND / 2) {
+        ++Offset;
+    } else if (fraction <= -(TICKS_PER_SECOND / 2)) {
+        --Offset;
+    }
     SwRtcTrace64(L"OffsetSeconds", Offset);
     SwRtcTrace(L"OffsetFormat", OFFSET_FORMAT);
     SwRtcTrace(L"Learns", (ULONG)InterlockedIncrement(&Dev->Learns));
@@ -309,8 +318,6 @@ NTSTATUS SwRtcEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
 NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
-    UNICODE_STRING Name;
-    OBJECT_ATTRIBUTES Attributes;
     NTSTATUS Status;
 
     if (Dev->I2c == NULL) {
@@ -321,6 +328,15 @@ NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
         }
     }
     SwRtcRestoreTime(Dev);
+    return SwRtcEvtRestart(Device);
+}
+
+NTSTATUS SwRtcEvtRestart(WDFDEVICE Device)
+{
+    PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
+    UNICODE_STRING Name;
+    OBJECT_ATTRIBUTES Attributes;
+    NTSTATUS Status;
 
     if (Dev->TimeCallback == NULL) {
         RtlInitUnicodeString(&Name, L"\\Callback\\SetSystemTime");
@@ -339,7 +355,7 @@ NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
     return STATUS_SUCCESS;
 }
 
-VOID SwRtcEvtSelfManagedIoCleanup(WDFDEVICE Device)
+NTSTATUS SwRtcEvtSuspend(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
     if (Dev->TimeCallback != NULL) {
@@ -353,6 +369,13 @@ VOID SwRtcEvtSelfManagedIoCleanup(WDFDEVICE Device)
     if (Dev->LearnWork != NULL) {
         WdfWorkItemFlush(Dev->LearnWork);
     }
+    return STATUS_SUCCESS;
+}
+
+VOID SwRtcEvtSelfManagedIoCleanup(WDFDEVICE Device)
+{
+    PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
+    (VOID)SwRtcEvtSuspend(Device);
     if (Dev->I2c != NULL) {
         WdfIoTargetClose(Dev->I2c);
         WdfObjectDelete(Dev->I2c);
@@ -373,6 +396,8 @@ NTSTATUS SwRtcEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
     Pnp.EvtDevicePrepareHardware = SwRtcEvtPrepareHardware;
     Pnp.EvtDeviceSelfManagedIoInit = SwRtcEvtSelfManagedIoInit;
     Pnp.EvtDeviceSelfManagedIoCleanup = SwRtcEvtSelfManagedIoCleanup;
+    Pnp.EvtDeviceSelfManagedIoSuspend = SwRtcEvtSuspend;
+    Pnp.EvtDeviceSelfManagedIoRestart = SwRtcEvtRestart;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &Pnp);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&Attributes, SWRTC_DEVICE);
     Status = WdfDeviceCreate(&DeviceInit, &Attributes, &Device);
@@ -400,7 +425,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         RtlCopyMemory(&SwRtcParamsPath[RegistryPath->Length / sizeof(WCHAR)], L"\\Parameters", sizeof(L"\\Parameters"));
         (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, SwRtcParamsPath);
     }
-    SwRtcTrace(L"DriverVersion", 2);
+    SwRtcTrace(L"DriverVersion", 4);
     WDF_DRIVER_CONFIG_INIT(&Config, SwRtcEvtDeviceAdd);
     return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &Config, WDF_NO_HANDLE);
 }

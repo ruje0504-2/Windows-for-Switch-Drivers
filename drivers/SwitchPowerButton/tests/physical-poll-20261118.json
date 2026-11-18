@@ -1,0 +1,541 @@
+{
+  "component": "switchpwrbtn",
+  "hardware_id": "ACPI\\SWOA0601\\0",
+  "version": "1.0.0.8",
+  "qualified_on": "Switch Lite / Windows ARM64",
+  "observed_at_utc": "2026-11-18T20:42:20.0780236Z",
+  "previous_version": "1.0.0.7",
+  "previous_source": "06614ee6b9bbe80682f3f45e2c84a5cdd9f69133",
+  "previous_signed_sys_sha256": "54c5529e332eb472cb005c9c2adcc0301bfbf4f8e9221c882225bb9ec2b8f787",
+  "candidate_package_sha256": {
+    "switchpwrbtn.cat": "73019cb732881a144a375f93894134ba4f3ab3218e80aa9c26915e90272cafdb",
+    "switchpwrbtn.sys": "879550e4eb292619f45de86eb458fc94f07149ca3de95bc88369166fcd64914e",
+    "switchpwrbtn.inf": "7910afdcc5c93fba450df747fc1953df1b539af49dda75c2e4a47b9b043aa217"
+  },
+  "rollback_package_sha256": {
+    "switchpwrbtn.cat": "d52a7513820063f31084a4bf1d97c1dc39503eab69c50596c20cd0c46f2cdb14",
+    "switchpwrbtn.sys": "54c5529e332eb472cb005c9c2adcc0301bfbf4f8e9221c882225bb9ec2b8f787",
+    "switchpwrbtn.inf": "3add3d22c5cd663b60ea492ecf03050e7b0efc63aad64af9d2fa367597445766"
+  },
+  "source_reproduction": {
+    "fresh_unsigned": "5aa017fdb7dc569c6a0666d6cc27c915e688c473509f7dc50517e30e70ca64c8",
+    "exact_candidate_reproduced": true,
+    "runtime_source_sha256": "3639959f5c9f66b5e182f48c390ca570410282bb6a360e262d3db920a7bae90b",
+    "source_reference_commit": "06614ee6b9bbe80682f3f45e2c84a5cdd9f69133"
+  },
+  "previous_image_reproduced_after_excluding_pe_signature_and_checksum": true,
+  "stage_catalog_checks": [
+    {
+      "exit": 0,
+      "file": "switchpwrbtn.cat"
+    },
+    {
+      "exit": 0,
+      "file": "switchpwrbtn.sys"
+    },
+    {
+      "exit": 0,
+      "file": "switchpwrbtn-accepted.inf"
+    },
+    {
+      "exit": 0,
+      "file": "switchpwrbtn.cat"
+    },
+    {
+      "exit": 0,
+      "file": "switchpwrbtn.sys"
+    },
+    {
+      "exit": 0,
+      "file": "switchpwrbtn.inf"
+    }
+  ],
+  "control_method": "The Switch ran signed ARM64 programs with the production callback bodies compiled against deterministic I/O, time and HID substitutes. The same case rows were reproduced with a native host compiler. The physical KMDF tests are recorded separately.",
+  "control_code": "tools/tests/test-pmic-button-clock.py",
+  "control_run": {
+    "utc": "2026-11-18T20:20:21.3982236Z",
+    "boot": "2026-11-18T20:07:14.7060760Z",
+    "cases": {
+      "reference": {
+        "matched": 7,
+        "total": 12,
+        "cases": {
+          "held_no_duplicate": {
+            "actual": 2,
+            "expected": 2
+          },
+          "two_transactions_per_valid_poll": {
+            "actual": 6,
+            "expected": 6
+          },
+          "short_wake": {
+            "actual": 2,
+            "expected": 2
+          },
+          "level_read_failed_after_edge": {
+            "actual": 0,
+            "expected": 2
+          },
+          "screen_woke_during_read_retry": {
+            "actual": 0,
+            "expected": 2
+          },
+          "multiple_failures_then_held": {
+            "actual": 1,
+            "expected": 2
+          },
+          "no_spurious_press_on_irq_failure": {
+            "actual": 0,
+            "expected": 0
+          },
+          "discard_pre_suspend_edge": {
+            "actual": 0,
+            "expected": 0
+          },
+          "suppress_held_until_release": {
+            "actual": 2,
+            "expected": 2
+          },
+          "failed_periodic_sample_keeps_last_level": {
+            "actual": 0,
+            "expected": 82
+          },
+          "real_zero_status_valid_interrupt": {
+            "actual": 64,
+            "expected": 64
+          },
+          "unavailable_start_irq_recorded": {
+            "actual": 0,
+            "expected": 4294967295
+          }
+        },
+        "arm64_signed_probe_sha256": "8cedad34628837211c5dd214c1ce3dd7968ab75ab720a9230f6cb7baddb49a03"
+      },
+      "candidate": {
+        "matched": 12,
+        "total": 12,
+        "cases": {
+          "held_no_duplicate": {
+            "actual": 2,
+            "expected": 2
+          },
+          "two_transactions_per_valid_poll": {
+            "actual": 6,
+            "expected": 6
+          },
+          "short_wake": {
+            "actual": 2,
+            "expected": 2
+          },
+          "level_read_failed_after_edge": {
+            "actual": 2,
+            "expected": 2
+          },
+          "screen_woke_during_read_retry": {
+            "actual": 2,
+            "expected": 2
+          },
+          "multiple_failures_then_held": {
+            "actual": 2,
+            "expected": 2
+          },
+          "no_spurious_press_on_irq_failure": {
+            "actual": 0,
+            "expected": 0
+          },
+          "discard_pre_suspend_edge": {
+            "actual": 0,
+            "expected": 0
+          },
+          "suppress_held_until_release": {
+            "actual": 2,
+            "expected": 2
+          },
+          "failed_periodic_sample_keeps_last_level": {
+            "actual": 82,
+            "expected": 82
+          },
+          "real_zero_status_valid_interrupt": {
+            "actual": 64,
+            "expected": 64
+          },
+          "unavailable_start_irq_recorded": {
+            "actual": 4294967295,
+            "expected": 4294967295
+          }
+        },
+        "arm64_signed_probe_sha256": "edfc60eb02b99dcbc745335adf4cd0333fd33ed47eadd9c97c356816ae37a254"
+      }
+    }
+  },
+  "settled_desktop": {
+    "utc": "2026-11-18T20:42:20.0780236Z",
+    "boot": "2026-11-18T20:39:29.8023230Z",
+    "devices": [
+      {
+        "code": 0,
+        "name": "tegra210i2c",
+        "id": "ACPI\\SWOA0201\\1"
+      },
+      {
+        "code": 0,
+        "name": "tegra210i2c",
+        "id": "ACPI\\SWOA0201\\3"
+      },
+      {
+        "code": 0,
+        "name": "tegra210i2c",
+        "id": "ACPI\\SWOA0201\\5"
+      },
+      {
+        "code": 0,
+        "name": "switchpwrbtn",
+        "id": "ACPI\\SWOA0601\\0"
+      },
+      {
+        "code": 0,
+        "name": "tegragpurender",
+        "id": "ACPI\\SWOA0F01\\0"
+      },
+      {
+        "code": 0,
+        "name": "nvtsdhc",
+        "id": "ACPI\\NVDA0101\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchbattery",
+        "id": "ACPI\\SWOA0314\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchaudio",
+        "id": "ACPI\\SWOA0C01\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchfan",
+        "id": "ACPI\\SWOA0402\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchrtc",
+        "id": "ACPI\\SWOA0801\\0"
+      },
+      {
+        "code": 0,
+        "name": "tegra210gpio",
+        "id": "ACPI\\SWOA0101\\0"
+      },
+      {
+        "code": 0,
+        "name": "switchwifi",
+        "id": "ACPI\\SWOA0D01\\0"
+      }
+    ],
+    "system_hid": [
+      {
+        "id": "HID\\HID_DEVICE_SYSTEM_VHF\\4&126EB1C1&0&0000",
+        "name": "HID-compliant system controller",
+        "hardware": [
+          "HID\\HID_DEVICE_SYSTEM_VHF",
+          "HID\\VID_057E&PID_5601",
+          "HID\\VID_057E&UP:0001_U:0080",
+          "HID_DEVICE_SYSTEM_CONTROL",
+          "HID_DEVICE_UP:0001_U:0080",
+          "HID_DEVICE"
+        ],
+        "compatible": [
+          null
+        ],
+        "parent": "VHF\\HID_DEVICE_SYSTEM_VHF\\3&2e052a67&0&{b132c5c0-95e3-5225-a61a-5bf3936ccbb1}",
+        "code": 0
+      },
+      {
+        "id": "VHF\\HID_DEVICE_SYSTEM_VHF\\3&2E052A67&0&{B132C5C0-95E3-5225-A61A-5BF3936CCBB1}",
+        "name": "Virtual HID Framework (VHF) HID device",
+        "hardware": [
+          "HID_DEVICE_SYSTEM_VHF",
+          "VHF\\VID_057E&PID_5601"
+        ],
+        "compatible": [
+          null
+        ],
+        "parent": "ACPI\\SWOA0601\\0",
+        "code": 0
+      }
+    ],
+    "dwm_module_sha256": {
+      "TegraGpuD3DVk.dll": "ded6fa4affec0f18773503d282f9b44939090488202ef5f25ea1d879dd862f0d",
+      "libvulkan_nouveau.dll": "e563a81d6196c91dde95aaa112ff410c3b32f07ebf9754609428c34f27e52934"
+    },
+    "gpu_kmd_sha256": "6c86354e781e76d671c20bf14b124248a6e1aa264dcab6d459a6b14d551469b0",
+    "application_loader_settings_sha256": "e273b17805e5df8e8f0709d9cf3e4bb70a624e2c644cb40899cc7baf60b332d6",
+    "pacecar_settings_sha256": "9b44f2e1666c9d603180972b551797a2dec76326f73bc6693db0d3626a37bfa7",
+    "pacecar_backup_sha256": "710c6b79e1e5e7cb82311732d4d34adef76a6bf721573dd6bbd470eca95bbf35",
+    "power_mode": 1,
+    "external_power": true,
+    "temperature_c": 38,
+    "cpu_last_error": 0,
+    "emc_transitions": 148,
+    "emc_last_error": 0,
+    "i2c": {
+      "timeouts": 0,
+      "nacks": 0,
+      "errors": 0,
+      "version": 7
+    },
+    "sd": {
+      "actual_khz": 199680,
+      "adma_errors": 0
+    }
+  },
+  "cleanup": {
+    "retired_one_shot_tasks": 2,
+    "removed_device_trial_files": 24,
+    "on_device_recovery_kit": "C:\\ProgramData\\SwitchWOA\\DriverReview\\s5-rtc-button-drivers-584620b39e",
+    "mac_transfer_and_vm_temporary_bytes": 387944981
+  },
+  "change": "Retain the clear-on-read MAX77620 EN0 press and its observed display state if the following level read fails. A successful retry can emit the missed HID short press. Suspend clears the pending edge. A failed start IRQ read has an explicit status and a sentinel outside the 8-bit register range.",
+  "first_deferred_selection": {
+    "argument": "INF file path",
+    "flags": 64,
+    "api_returned_success": true,
+    "restart_requested_by_api": false,
+    "post_boot": {
+      "phase": "PreviousRetained",
+      "sample": {
+        "diagnostic_version": 7,
+        "suspended": 0,
+        "inf_sha": "3ADD3D22C5CD663B60EA492ECF03050E7B0EFC63AAD64AF9D2FA367597445766",
+        "boot_irq_read": null,
+        "vhf": 0,
+        "stat": 2,
+        "inf": "oem114.inf",
+        "sys": "54C5529E332EB472CB005C9C2ADCC0301BFBF4F8E9221C882225BB9EC2B8F787",
+        "boot_irq": 0,
+        "code": 0,
+        "utc": "2026-11-18T20:34:01.6857988Z",
+        "timer": 0,
+        "tick": 206546,
+        "version": "1.0.0.7",
+        "polls": 2600,
+        "first_read": 0,
+        "resume_status": 0
+      },
+      "boot": "2026-11-18T20:30:36.8504970Z"
+    },
+    "system_events": [
+      {
+        "record": 67455,
+        "utc": "2026-11-18T20:29:50.2733327Z",
+        "id": 1074
+      },
+      {
+        "record": 67457,
+        "utc": "2026-11-18T20:30:07.9939032Z",
+        "id": 6006
+      },
+      {
+        "record": 67466,
+        "utc": "2026-11-18T20:31:11.1775328Z",
+        "id": 6005
+      }
+    ]
+  },
+  "corrected_deferred_selection": {
+    "argument": "C:\\ProgramData\\SwitchWOA\\DriverReview\\s5-rtc-button-drivers-584620b39e\\button\\candidate",
+    "flags": 64,
+    "unused_candidate_removed": "oem143.inf",
+    "need_restart": true,
+    "previous_binding": {
+      "utc": "2026-11-18T20:37:48.9100657Z",
+      "boot": "2026-11-18T20:30:36.8556810Z",
+      "oem": "oem114.inf",
+      "inf_sha": "3ADD3D22C5CD663B60EA492ECF03050E7B0EFC63AAD64AF9D2FA367597445766",
+      "sys": "54C5529E332EB472CB005C9C2ADCC0301BFBF4F8E9221C882225BB9EC2B8F787",
+      "version": "1.0.0.7",
+      "code": 0,
+      "parameters": {
+        "TimerCreateStatus": "0",
+        "WakeReports": "1",
+        "LastOnOffStat": "2",
+        "FirstReadStatus": "0",
+        "OnOffIrqAtStart": "0",
+        "LastI2cError": "-1073741643",
+        "OnOffStatAtStart": "2",
+        "Reports": "3",
+        "ResumeReadStatus": "0",
+        "PowerReports": "2",
+        "DriverVersion": "7",
+        "Suspended": "0",
+        "Polls": "6000",
+        "VhfStartStatus": "0"
+      }
+    },
+    "binding_before_shutdown": {
+      "utc": "2026-11-18T20:38:08.9187792Z",
+      "boot": "2026-11-18T20:30:36.8556810Z",
+      "oem": "oem114.inf",
+      "inf_sha": "3ADD3D22C5CD663B60EA492ECF03050E7B0EFC63AAD64AF9D2FA367597445766",
+      "sys": "54C5529E332EB472CB005C9C2ADCC0301BFBF4F8E9221C882225BB9EC2B8F787",
+      "version": "1.0.0.7",
+      "code": 0,
+      "parameters": {
+        "TimerCreateStatus": "0",
+        "WakeReports": "1",
+        "LastOnOffStat": "2",
+        "FirstReadStatus": "0",
+        "OnOffIrqAtStart": "0",
+        "LastI2cError": "-1073741643",
+        "OnOffStatAtStart": "2",
+        "Reports": "3",
+        "ResumeReadStatus": "0",
+        "PowerReports": "2",
+        "DriverVersion": "7",
+        "Suspended": "0",
+        "Polls": "6200",
+        "VhfStartStatus": "0"
+      }
+    },
+    "boot": "2026-11-18T20:39:29.8023230Z",
+    "system_events": [
+      {
+        "record": 67545,
+        "utc": "2026-11-18T20:38:25.1663295Z",
+        "id": 1074
+      },
+      {
+        "record": 67547,
+        "utc": "2026-11-18T20:38:45.9800542Z",
+        "id": 6006
+      },
+      {
+        "record": 67556,
+        "utc": "2026-11-18T20:40:06.2933704Z",
+        "id": 6005
+      }
+    ],
+    "setupapi": [
+      ">>>  [Device Install (DiInstallDriver) - C:\\ProgramData\\SwitchWOA\\DriverReview\\s5-rtc-button-drivers-584620b39e\\button\\candidate\\switchpwrbtn.inf]",
+      ">>>  [Device Install (DiInstallDriver) - C:\\ProgramData\\SwitchWOA\\DriverReview\\s5-rtc-button-drivers-584620b39e\\button\\candidate]",
+      "dvi:      {Update Device - ACPI\\SWOA0601\\0} 04:38:43.173",
+      "utl:           {Select Drivers - ACPI\\SWOA0601\\0} 04:38:43.173",
+      "utl:                     Configuration  - ACPI\\SWOA0601",
+      "utl:                     Configuration  - ACPI\\SWOA0601 [SwPwr_Inst.NT]",
+      "utl:                     Configuration  - ACPI\\SWOA0601 [SwPwr_Inst.NT]",
+      "utl:                     Configuration  - ACPI\\SWOA0601 [SwPwr_Inst.NT]",
+      "utl:                     Configuration  - ACPI\\SWOA0601 [SwPwr_Inst.NT]",
+      "utl:                     Configuration  - ACPI\\SWOA0601",
+      "utl:                     Configuration  - ACPI\\SWOA0601 [SwPwr_Inst.NT]",
+      "dvi:           Current driver: oem114.inf:f275d37c221ae399:SwPwr_Inst.NT:1.0.0.7:ACPI\\SWOA0601",
+      "dvi:                {Configure Device - ACPI\\SWOA0601\\0} 04:38:43.235",
+      "sto:                          Source Filter  = ACPI\\SWOA0601",
+      "inf:                               Hardware Id  = ACPI\\SWOA0601",
+      "dvi:                          Configuration: oem143.inf:ACPI\\SWOA0601,*",
+      "!    dvi:                     Restart of device 'ACPI\\SWOA0601\\0' was skipped (NEEDREBOOT/NEEDRESTART)."
+    ],
+    "best_ranked_installed": true
+  },
+  "kmdf_poll_observations": {
+    "first": {
+      "diagnostic_version": 8,
+      "suspended": 0,
+      "inf_sha": "7910AFDCC5C93FBA450DF747FC1953DF1B539AF49DDA75C2E4A47B9B043AA217",
+      "boot_irq_read": 0,
+      "vhf": 0,
+      "stat": 2,
+      "inf": "oem143.inf",
+      "sys": "879550E4EB292619F45DE86EB458FC94F07149CA3DE95BC88369166FCD64914E",
+      "boot_irq": 0,
+      "code": 0,
+      "utc": "2026-11-18T20:41:25.2712746Z",
+      "timer": 0,
+      "tick": 117218,
+      "version": "1.0.0.8",
+      "polls": 1200,
+      "first_read": 0,
+      "resume_status": 0
+    },
+    "next": {
+      "diagnostic_version": 8,
+      "suspended": 0,
+      "inf_sha": "7910AFDCC5C93FBA450DF747FC1953DF1B539AF49DDA75C2E4A47B9B043AA217",
+      "boot_irq_read": 0,
+      "vhf": 0,
+      "stat": 2,
+      "inf": "oem143.inf",
+      "sys": "879550E4EB292619F45DE86EB458FC94F07149CA3DE95BC88369166FCD64914E",
+      "boot_irq": 0,
+      "code": 0,
+      "utc": "2026-11-18T20:41:32.5707706Z",
+      "timer": 0,
+      "tick": 124484,
+      "version": "1.0.0.8",
+      "polls": 1400,
+      "first_read": 0,
+      "resume_status": 0
+    },
+    "settled": {
+      "LastI2cError": "3221225653",
+      "WakeReports": "1",
+      "Reports": "3",
+      "TimerCreateStatus": "0",
+      "FirstReadStatus": "0",
+      "OnOffIrqAtStart": "0",
+      "VhfStartStatus": "0",
+      "OnOffStatAtStart": "2",
+      "BootIrqReadStatus": "0",
+      "ResumeReadStatus": "0",
+      "PowerReports": "2",
+      "Suspended": "0",
+      "Polls": "2000",
+      "LastOnOffStat": "2",
+      "DriverVersion": "8"
+    },
+    "registry_update_interval_polls": 200
+  },
+  "signed_rollback": {
+    "staged_original_name": "switchpwrbtn-accepted.inf",
+    "verified_file_repository": "switchpwrbtn-accepted.inf_arm64_e5c8f21df0167011",
+    "last_verified_active_original": {
+      "diagnostic_version": 7,
+      "suspended": 0,
+      "inf_sha": "3ADD3D22C5CD663B60EA492ECF03050E7B0EFC63AAD64AF9D2FA367597445766",
+      "boot_irq_read": null,
+      "vhf": 0,
+      "stat": 2,
+      "inf": "oem114.inf",
+      "sys": "54C5529E332EB472CB005C9C2ADCC0301BFBF4F8E9221C882225BB9EC2B8F787",
+      "boot_irq": 0,
+      "code": 0,
+      "utc": "2026-11-18T20:34:01.6857988Z",
+      "timer": 0,
+      "tick": 206546,
+      "version": "1.0.0.7",
+      "polls": 2600,
+      "first_read": 0,
+      "resume_status": 0
+    },
+    "candidate_to_previous_live_rollback_exercised": false
+  },
+  "scope": "Real samples cover the interrupt-latch register at startup, running polls, and the published VHF System Control device. The timeout, press routing and post-suspend state machine were exercised by the ARM64 control. No physical button press, wake from S0 or injected I2C fault was performed on this boot. Persistent LastI2cError does not date an error.",
+  "independent_review": "Switch Power is under the user-directed main-chat review.",
+  "post_boot_driver_store": {
+    "utc": "2026-11-18T20:41:37.7439263Z",
+    "binding": {
+      "service": "switchpwrbtn",
+      "version": "1.0.0.8",
+      "oem": "oem143.inf",
+      "active_sys": "879550E4EB292619F45DE86EB458FC94F07149CA3DE95BC88369166FCD64914E",
+      "members": {
+        "switchpwrbtn.sys": "879550E4EB292619F45DE86EB458FC94F07149CA3DE95BC88369166FCD64914E",
+        "switchpwrbtn.cat": "73019CB732881A144A375F93894134BA4F3AB3218E80AA9C26915E90272CAFDB",
+        "switchpwrbtn.inf": "7910AFDCC5C93FBA450DF747FC1953DF1B539AF49DDA75C2E4A47B9B043AA217"
+      },
+      "file_repository": "switchpwrbtn.inf_arm64_c2eb14150d08e2b8",
+      "id": "ACPI\\SWOA0601\\0",
+      "code": 0
+    }
+  }
+}
