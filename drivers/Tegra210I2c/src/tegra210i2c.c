@@ -151,20 +151,20 @@ static BOOLEAN TegraI2cWaitClear(PTEGRA_I2C_DEVICE Dev, ULONG Off, ULONG Mask, U
         }
         KeStallExecutionProcessor(5);
     }
-    return FALSE;
+    return (RdReg(Dev, Off) & Mask) == 0;
 }
 
-static VOID TegraI2cLoadConfig(PTEGRA_I2C_DEVICE Dev)
+static BOOLEAN TegraI2cLoadConfig(PTEGRA_I2C_DEVICE Dev)
 {
     WrReg(Dev, I2C_CONFIG_LOAD, CONFIG_LOAD_ALL);
-    (VOID)TegraI2cWaitClear(Dev, I2C_CONFIG_LOAD, 1, 10000);
+    return TegraI2cWaitClear(Dev, I2C_CONFIG_LOAD, 1, 10000);
 }
 
-static VOID TegraI2cResetFifos(PTEGRA_I2C_DEVICE Dev)
+static BOOLEAN TegraI2cResetFifos(PTEGRA_I2C_DEVICE Dev)
 {
     WrReg(Dev, I2C_INT_STATUS, 0xFFFFFFFF);
     WrReg(Dev, I2C_FIFO_CONTROL, RdReg(Dev, I2C_FIFO_CONTROL) | FIFO_FLUSH_TX_RX);
-    (VOID)TegraI2cWaitClear(Dev, I2C_FIFO_CONTROL, FIFO_FLUSH_TX_RX, 10000);
+    return TegraI2cWaitClear(Dev, I2C_FIFO_CONTROL, FIFO_FLUSH_TX_RX, 10000);
 }
 
 /* After an arbitration loss or timeout: 9 clock pulses to free a stuck slave. */
@@ -172,12 +172,13 @@ static VOID TegraI2cBusClear(PTEGRA_I2C_DEVICE Dev)
 {
     ULONG Waited;
     WrReg(Dev, I2C_BUS_CLEAR_CONFIG, (9u << 16) | (1u << 2) | 1u);  /* threshold 9, STOP, enable */
-    TegraI2cLoadConfig(Dev);
-    for (Waited = 0; Waited < 10000; Waited += 5) {
-        if ((RdReg(Dev, I2C_INT_STATUS) & INT_BUS_CLEAR_DONE) != 0) {
-            break;
+    if (TegraI2cLoadConfig(Dev)) {
+        for (Waited = 0; Waited < 10000; Waited += 5) {
+            if ((RdReg(Dev, I2C_INT_STATUS) & INT_BUS_CLEAR_DONE) != 0) {
+                break;
+            }
+            KeStallExecutionProcessor(5);
         }
-        KeStallExecutionProcessor(5);
     }
     WrReg(Dev, I2C_INT_STATUS, 0xFFFFFFFF);
 }
@@ -191,7 +192,9 @@ static NTSTATUS TegraI2cTransfer(PTEGRA_I2C_DEVICE Dev, USHORT Address, BOOLEAN 
     if (Length == 0 || Length > I2C_MAX_TRANSFER) {
         return STATUS_INVALID_PARAMETER;
     }
-    TegraI2cResetFifos(Dev);
+    if (!TegraI2cResetFifos(Dev)) {
+        goto RecoverBusTimeout;
+    }
 
     WrReg(Dev, I2C_TX_FIFO, HDR0_I2C_PACKET1);
     WrReg(Dev, I2C_TX_FIFO, Length - 1);
@@ -261,9 +264,10 @@ Error:
     return STATUS_IO_DEVICE_ERROR;
 
 Timeout:
+    TegraI2cResetFifos(Dev);
+RecoverBusTimeout:
     InterlockedIncrement(&Dev->Timeouts);
     InterlockedExchange(&Dev->LastAddress, Address);
-    TegraI2cResetFifos(Dev);
     TegraI2cBusClear(Dev);
     TegraI2cTraceErrors(Dev);
     return STATUS_IO_TIMEOUT;
@@ -449,12 +453,13 @@ NTSTATUS TegraI2cEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRES
     /* Packet mode, interrupts masked (version 1 polls). */
     WrReg(Dev, I2C_INT_MASK, 0);
     WrReg(Dev, I2C_CNFG, RdReg(Dev, I2C_CNFG) | CNFG_PACKET_MODE);
-    TegraI2cLoadConfig(Dev);
-    TegraI2cResetFifos(Dev);
+    if (!TegraI2cLoadConfig(Dev) || !TegraI2cResetFifos(Dev)) {
+        GateStatus = STATUS_IO_TIMEOUT;
+    }
     TegraI2cTrace(Dev, L"CnfgAfter", RdReg(Dev, I2C_CNFG));
     TegraI2c5Release(Dev->SdGate);
 
-    return STATUS_SUCCESS;
+    return GateStatus;
 }
 
 NTSTATUS TegraI2cEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
