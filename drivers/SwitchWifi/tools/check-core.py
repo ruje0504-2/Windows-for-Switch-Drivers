@@ -62,6 +62,7 @@ if not args.build_only:
         "-fno-sanitize-recover=all", "-I" + str(args.out),
         str(root / "tests/test_join_timeout.c"), "-o", str(join_test)], check=True)
     subprocess.run([str(join_test)], check=True)
+    subprocess.run([sys.executable, root / "tests/test-report.py", "--cc", args.cc], check=True)
 kmdf = args.kmdf_include or args.wdk_include.parent / "wdf/kmdf/1.33"
 kernel_cc = Path(args.cc).with_name("clang-cl" + Path(args.cc).suffix)
 kernel_flags = [str(kernel_cc), "--target=aarch64-pc-windows-msvc", "/c",
