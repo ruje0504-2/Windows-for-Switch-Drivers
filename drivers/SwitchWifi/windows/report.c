@@ -50,7 +50,18 @@ static VOID WriteReport(WDFWORKITEM Work)
         if (NT_SUCCESS(Status)) {
             UNICODE_STRING Value;
             RtlInitUnicodeString(&Value, Text);
-            (VOID)WdfRegistryAssignUnicodeString(Key, &Name, &Value);
+            Status = WdfRegistryAssignUnicodeString(Key, &Name, &Value);
+            if (!NT_SUCCESS(Status))
+                Status = WdfRegistryAssignUnicodeString(Key, &Name, &Value);
+        }
+        if (!NT_SUCCESS(Status)) {
+            /* Keep the latest in-memory snapshot for the next update or flush. */
+            KeAcquireSpinLock(&R->Lock, &Irql);
+            R->Dirty = TRUE;
+            R->Scheduled = FALSE;
+            KeReleaseSpinLock(&R->Lock, Irql);
+            WdfRegistryClose(Key);
+            return;
         }
     }
 }

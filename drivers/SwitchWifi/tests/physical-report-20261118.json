@@ -1,0 +1,513 @@
+{
+  "module": "Nintendo Switch Lite station Wi-Fi, ACPI/SWOA0D01",
+  "implementation_commit": "3c5723b2d0da61bdfb817f717778143b46f661b0",
+  "package_source_commit": "7d7bf6806d4a22ea0cc9408b00307a281e488a40",
+  "package_version": "0.5.7.1",
+  "prior_version": "0.5.7.0",
+  "change": "WriteReport checks the result of the registry write, retries a transient error once, and keeps the latest snapshot dirty after a persistent failure for the next scheduled update or explicit flush. The radio firmware, join and data transfer paths are unchanged by this commit.",
+  "component_sha256": {
+    "candidate/switchwifi.inf": "bebb98a9c357fba96fb3d45218072724b84cb082d9211e10dff492680f71cea5",
+    "candidate/switchwifi.sys": "600b5d4e9d465c0d51062e48a0ac9bfeb467ca09d911b1048115cc29be7a804c",
+    "candidate/switchwifi.cat": "3ac32fcba2c90eab2ab1ce1b1056868fcc6471e8f07e1b5036509aee92208f4b",
+    "recovery/switchwifi.sys": "61fa3cae2790e0e97fe6c94842cdf809f677fe91e7691e92d09d8e95cfb1d865",
+    "recovery/switchwifi.inf": "67b53172578ffe534617abf25375d2428c8650ca87548019284186889560a0e9",
+    "recovery/switchwifi.cat": "acd5b223a4aae7f1545a08d779b6036a4f08250e03fad84a403ab380d42ff345"
+  },
+  "arm64_cpu_control": {
+    "arch": "ARM64",
+    "tests": [
+      {
+        "output": "normal=1 concurrent=1 transient=0 retry_pending=0 bounded_calls=1 recovered=0",
+        "signature": "Valid",
+        "sha256": "3C5C7FD0CED8698D6085E4449A0B3293849125BB32DF374089A9FF7920DA2EBB",
+        "mode": "reference",
+        "exit": 1
+      },
+      {
+        "output": "normal=1 concurrent=1 transient=1 retry_pending=1 bounded_calls=2 recovered=1",
+        "signature": "Valid",
+        "sha256": "AF12D3FCF8C084200EFDCA441CFDE2BD863A908F681F3E170F3A5AF2A0567621",
+        "mode": "candidate",
+        "exit": 0
+      }
+    ],
+    "scope": "The real ARM64 host ran the production report writer with a substituted registry. The live device tests exercise ordinary report persistence, association and packet transfer."
+  },
+  "physical_preparation": {
+    "original": {
+      "utc": "2026-11-18T17:50:42.5669716Z",
+      "boot": "2026-11-18T17:34:48.7945080Z",
+      "code": 0,
+      "inf": "oem88.inf",
+      "version": "0.5.7.0",
+      "service_state": "Running",
+      "sys_sha256": "61FA3CAE2790E0E97FE6C94842CDF809F677FE91E7691E92D09D8E95CFB1D865",
+      "inf_sha256": "67B53172578FFE534617ABF25375D2428C8650CA87548019284186889560A0E9",
+      "adapters": 1,
+      "status": "Up",
+      "link": "585 Mbps",
+      "report": "v=5 session=1 step=5/00000000 failure=0/00000000 scan=16/C00000B5 join=14/00000000 keys=18 add=8 del=6 eth_pre=10 eth_unknown=0 native_clear=0 native_protected=0 meta=1 rssi=0 malformed=0 filter=B/11/1/00000000 hw=9/00000000 irq=1 ring=1 select=0/6/1/2/2/0 path=160FF credits=255 leave=4/00000000",
+      "stats": {
+        "ReceivedPacketErrors": 0,
+        "ReceivedDiscardedPackets": 0,
+        "ReceivedUnicastPackets": 255,
+        "OutboundDiscardedPackets": 0,
+        "SentUnicastPackets": 138,
+        "OutboundPacketErrors": 0,
+        "ReceivedBytes": 233771,
+        "SentBytes": 27675
+      },
+      "audio_sha256": "36A62D088D2A04DBC5C7ACB97F2B7528FB568CB996A6D2B9F92F27005BBBE81B",
+      "gpu_sha256": "6C86354E781E76D671C20BF14B124248A6E1AA264DCAB6D459A6B14D551469B0",
+      "gpu_code": 0,
+      "dwm": [
+        1360
+      ]
+    },
+    "signature_verifications": [
+      {
+        "exit": 0,
+        "name": "candidate/switchwifi.cat"
+      },
+      {
+        "exit": 0,
+        "name": "candidate/switchwifi.sys"
+      },
+      {
+        "exit": 0,
+        "name": "candidate/switchwifi.inf"
+      },
+      {
+        "exit": 0,
+        "name": "recovery/switchwifi.cat"
+      },
+      {
+        "exit": 0,
+        "name": "recovery/switchwifi.sys"
+      },
+      {
+        "exit": 0,
+        "name": "recovery/switchwifi.inf"
+      }
+    ],
+    "candidate_store": "switchwifi.inf_arm64_7121a5937168c3f2",
+    "controller_sha256": "b33a52d20617dff4b58fe0336a64e985e08d5736beb0c5b2d866075240126cf9",
+    "recovery_task_survived_original_driver_reboot": true,
+    "original_proof": {
+      "utc": "2026-11-18T17:54:38.0876077Z",
+      "boot": "2026-11-18T17:52:54.3411910Z",
+      "code": 0,
+      "inf": "oem88.inf",
+      "version": "0.5.7.0",
+      "service_state": "Running",
+      "sys_sha256": "61FA3CAE2790E0E97FE6C94842CDF809F677FE91E7691E92D09D8E95CFB1D865",
+      "inf_sha256": "67B53172578FFE534617ABF25375D2428C8650CA87548019284186889560A0E9",
+      "adapters": 1,
+      "status": "Up",
+      "link": "702 Mbps",
+      "report": "v=5 session=1 step=5/00000000 failure=0/00000000 scan=2/C00000B5 join=1/00000000 keys=18 add=2 del=0 eth_pre=3 eth_unknown=0 native_clear=0 native_protected=0 meta=1 rssi=0 malformed=0 filter=B/11/1/00000000 hw=9/00000000 irq=1 ring=1 select=0/6/1/2/2/0 path=160FF credits=255 leave=0/00000000",
+      "stats": {
+        "ReceivedPacketErrors": 0,
+        "ReceivedDiscardedPackets": 0,
+        "ReceivedUnicastPackets": 533,
+        "OutboundDiscardedPackets": 0,
+        "SentUnicastPackets": 362,
+        "OutboundPacketErrors": 0,
+        "ReceivedBytes": 358296,
+        "SentBytes": 78580
+      },
+      "audio_sha256": "36A62D088D2A04DBC5C7ACB97F2B7528FB568CB996A6D2B9F92F27005BBBE81B",
+      "gpu_sha256": "6C86354E781E76D671C20BF14B124248A6E1AA264DCAB6D459A6B14D551469B0",
+      "gpu_code": 0,
+      "dwm": [
+        1448
+      ]
+    }
+  },
+  "selection": {
+    "boot": "2026-11-18T17:52:54.3411910Z",
+    "pnp": {
+      "ok": true,
+      "error": 0,
+      "restart": false,
+      "utc": "2026-11-18T17:56:30.4219558Z"
+    },
+    "required_reboot": false,
+    "accepted_boot": "2026-11-18T17:59:20.7718120Z",
+    "candidate_before_traffic": {
+      "utc": "2026-11-18T18:01:29.8499336Z",
+      "boot": "2026-11-18T17:59:20.7718120Z",
+      "code": 0,
+      "inf": "oem18.inf",
+      "version": "0.5.7.1",
+      "service_state": "Running",
+      "sys_sha256": "600B5D4E9D465C0D51062E48A0AC9BFEB467CA09D911B1048115CC29BE7A804C",
+      "inf_sha256": "BEBB98A9C357FBA96FB3D45218072724B84CB082D9211E10DFF492680F71CEA5",
+      "adapters": 1,
+      "status": "Up",
+      "link": "585 Mbps",
+      "report": "v=5 session=1 step=5/00000000 failure=0/00000000 scan=2/C00000B5 join=1/00000000 keys=18 add=2 del=0 eth_pre=3 eth_unknown=0 native_clear=0 native_protected=0 meta=1 rssi=0 malformed=0 filter=B/11/1/00000000 hw=9/00000000 irq=1 ring=1 select=0/6/1/2/2/0 path=160FF credits=255 leave=0/00000000",
+      "stats": {
+        "ReceivedPacketErrors": 0,
+        "ReceivedDiscardedPackets": 0,
+        "ReceivedUnicastPackets": 615,
+        "OutboundDiscardedPackets": 0,
+        "SentUnicastPackets": 516,
+        "OutboundPacketErrors": 0,
+        "ReceivedBytes": 381663,
+        "SentBytes": 105388
+      },
+      "audio_sha256": "36A62D088D2A04DBC5C7ACB97F2B7528FB568CB996A6D2B9F92F27005BBBE81B",
+      "gpu_sha256": "6C86354E781E76D671C20BF14B124248A6E1AA264DCAB6D459A6B14D551469B0",
+      "gpu_code": 0,
+      "dwm": [
+        1456
+      ]
+    },
+    "candidate_after_traffic": {
+      "utc": "2026-11-18T18:01:54.1622408Z",
+      "boot": "2026-11-18T17:59:20.7718120Z",
+      "code": 0,
+      "inf": "oem18.inf",
+      "version": "0.5.7.1",
+      "service_state": "Running",
+      "sys_sha256": "600B5D4E9D465C0D51062E48A0AC9BFEB467CA09D911B1048115CC29BE7A804C",
+      "inf_sha256": "BEBB98A9C357FBA96FB3D45218072724B84CB082D9211E10DFF492680F71CEA5",
+      "adapters": 1,
+      "status": "Up",
+      "link": "585 Mbps",
+      "report": "v=5 session=1 step=5/00000000 failure=0/00000000 scan=2/C00000B5 join=1/00000000 keys=18 add=2 del=0 eth_pre=3 eth_unknown=0 native_clear=0 native_protected=0 meta=1 rssi=0 malformed=0 filter=B/11/1/00000000 hw=9/00000000 irq=1 ring=1 select=0/6/1/2/2/0 path=160FF credits=255 leave=0/00000000",
+      "stats": {
+        "ReceivedPacketErrors": 0,
+        "ReceivedDiscardedPackets": 0,
+        "ReceivedUnicastPackets": 1870,
+        "OutboundDiscardedPackets": 0,
+        "SentUnicastPackets": 812,
+        "OutboundPacketErrors": 0,
+        "ReceivedBytes": 1810627,
+        "SentBytes": 1507986
+      },
+      "audio_sha256": "36A62D088D2A04DBC5C7ACB97F2B7528FB568CB996A6D2B9F92F27005BBBE81B",
+      "gpu_sha256": "6C86354E781E76D671C20BF14B124248A6E1AA264DCAB6D459A6B14D551469B0",
+      "gpu_code": 0,
+      "dwm": [
+        1456
+      ]
+    },
+    "host_accepted": "2026-11-18T18:01:55.3967837Z",
+    "ordinary_report_persisted": true,
+    "recovery_actually_exercised": false,
+    "pnp_configuration_events": [
+      {
+        "utc": "2026-11-18T17:56:29.6513973Z",
+        "id": 400,
+        "record": 1239,
+        "fields": {
+          "DriverName": "oem18.inf",
+          "Status": "0x0",
+          "DriverVersion": "0.5.7.1"
+        }
+      },
+      {
+        "utc": "2026-11-18T17:56:29.7064292Z",
+        "id": 411,
+        "record": 1240,
+        "fields": {
+          "ServiceName": "switchwifi",
+          "DriverName": "oem18.inf",
+          "Status": "0xc00000e5",
+          "Problem": "0x0"
+        }
+      }
+    ],
+    "pnp_event_scope": "During the hot rebind Windows recorded configuration event 400 (status 0) and event 411 (problem 0, status 0xc00000e5) for the new INF. WLAN association completed about eight seconds later. The subsequent Windows restart restored the interface and transferred data. The origin of the transient PnP status is unresolved."
+  },
+  "candidate_hot_rebind": {
+    "before_traffic": {
+      "utc": "2026-11-18T17:57:08.4818384Z",
+      "boot": "2026-11-18T17:52:54.3411910Z",
+      "code": 0,
+      "inf": "oem18.inf",
+      "version": "0.5.7.1",
+      "service_state": "Running",
+      "sys_sha256": "600B5D4E9D465C0D51062E48A0AC9BFEB467CA09D911B1048115CC29BE7A804C",
+      "inf_sha256": "BEBB98A9C357FBA96FB3D45218072724B84CB082D9211E10DFF492680F71CEA5",
+      "adapters": 1,
+      "status": "Up",
+      "link": "585 Mbps",
+      "report": "v=5 session=1 step=5/00000000 failure=0/00000000 scan=2/00000000 join=1/00000000 keys=18 add=2 del=0 eth_pre=2 eth_unknown=0 native_clear=0 native_protected=0 meta=1 rssi=0 malformed=0 filter=B/11/1/00000000 hw=9/00000000 irq=1 ring=1 select=0/6/1/2/2/0 path=160FF credits=255 leave=0/00000000",
+      "stats": {
+        "ReceivedPacketErrors": 0,
+        "ReceivedDiscardedPackets": 0,
+        "ReceivedUnicastPackets": 151,
+        "OutboundDiscardedPackets": 0,
+        "SentUnicastPackets": 123,
+        "OutboundPacketErrors": 0,
+        "ReceivedBytes": 40539,
+        "SentBytes": 30306
+      },
+      "audio_sha256": "36A62D088D2A04DBC5C7ACB97F2B7528FB568CB996A6D2B9F92F27005BBBE81B",
+      "gpu_sha256": "6C86354E781E76D671C20BF14B124248A6E1AA264DCAB6D459A6B14D551469B0",
+      "gpu_code": 0,
+      "dwm": [
+        1448
+      ]
+    },
+    "after_traffic": {
+      "utc": "2026-11-18T17:57:32.0815807Z",
+      "boot": "2026-11-18T17:52:54.3411910Z",
+      "code": 0,
+      "inf": "oem18.inf",
+      "version": "0.5.7.1",
+      "service_state": "Running",
+      "sys_sha256": "600B5D4E9D465C0D51062E48A0AC9BFEB467CA09D911B1048115CC29BE7A804C",
+      "inf_sha256": "BEBB98A9C357FBA96FB3D45218072724B84CB082D9211E10DFF492680F71CEA5",
+      "adapters": 1,
+      "status": "Up",
+      "link": "585 Mbps",
+      "report": "v=5 session=1 step=5/00000000 failure=0/00000000 scan=2/00000000 join=1/00000000 keys=18 add=2 del=0 eth_pre=2 eth_unknown=0 native_clear=0 native_protected=0 meta=1 rssi=0 malformed=0 filter=B/11/1/00000000 hw=9/00000000 irq=1 ring=1 select=0/6/1/2/2/0 path=160FF credits=255 leave=0/00000000",
+      "stats": {
+        "ReceivedPacketErrors": 0,
+        "ReceivedDiscardedPackets": 0,
+        "ReceivedUnicastPackets": 1409,
+        "OutboundDiscardedPackets": 0,
+        "SentUnicastPackets": 419,
+        "OutboundPacketErrors": 0,
+        "ReceivedBytes": 1467041,
+        "SentBytes": 1431586
+      },
+      "audio_sha256": "36A62D088D2A04DBC5C7ACB97F2B7528FB568CB996A6D2B9F92F27005BBBE81B",
+      "gpu_sha256": "6C86354E781E76D671C20BF14B124248A6E1AA264DCAB6D459A6B14D551469B0",
+      "gpu_code": 0,
+      "dwm": [
+        1448
+      ]
+    },
+    "required_restart_for_pnp": false,
+    "accepted_boot": "2026-11-18T17:52:54.3411910Z"
+  },
+  "candidate_windows_startup": {
+    "planned": true,
+    "boot": "2026-11-18T17:59:20.7718120Z",
+    "link_proven_without_an_ssh_session": true,
+    "hardware_id": "ACPI\\SWOA0D01\\0",
+    "registry_report_persisted": true
+  },
+  "normal_transfers": {
+    "reference": {
+      "begin": "2026-11-18T17:48:46.451059+00:00",
+      "boot_before": "2026-11-18T17:34:48.7945080Z",
+      "sys_sha256": "61fa3cae2790e0e97fe6c94842cdf809f677fe91e7691e92d09d8e95cfb1d865",
+      "size_per_direction": 262144,
+      "rounds": [
+        {
+          "index": 0,
+          "sha256": "5cd75be5d71f60d84d4f09b2c075e83705b9a20f1dbc27e21de7598d14261d62",
+          "up_ms": 95.131,
+          "down_ms": 121.955,
+          "up_mbit_s": 22.0449,
+          "down_mbit_s": 17.1961
+        },
+        {
+          "index": 1,
+          "sha256": "a9bcbc5ad96fec39a6873218d37dd20f154dee61185bd8a4f5711adae1ad0f53",
+          "up_ms": 70.412,
+          "down_ms": 112.097,
+          "up_mbit_s": 29.784,
+          "down_mbit_s": 18.7084
+        },
+        {
+          "index": 2,
+          "sha256": "43b8a5fa3527c3bd089b6bd340f160f8100b188ba0356cbf900dd798cb84f409",
+          "up_ms": 55.307,
+          "down_ms": 82.076,
+          "up_mbit_s": 37.9184,
+          "down_mbit_s": 25.5513
+        },
+        {
+          "index": 3,
+          "sha256": "0dc840a8456db7ac44c6ea703d66a24c4490eab8590741a220e3b7a90db899e4",
+          "up_ms": 61.595,
+          "down_ms": 85.267,
+          "up_mbit_s": 34.0474,
+          "down_mbit_s": 24.5951
+        },
+        {
+          "index": 4,
+          "sha256": "17f4eba945c99b36724a32ac35892f316226b3f8138870e22fc05d0fde3a849a",
+          "up_ms": 63.756,
+          "down_ms": 78.61,
+          "up_mbit_s": 32.8934,
+          "down_mbit_s": 26.6779
+        }
+      ],
+      "completed": true,
+      "scope": "Five file upload/download pairs on one authenticated OpenSSH SFTP connection with SSH compression disabled. The first pair warms the connection. Time stamps come from the host monotonic clock. Rates include SFTP, both OS file paths and Wi-Fi. Every returned payload is compared with its source digest.",
+      "remote_removed": true,
+      "end": "2026-11-18T17:48:49.157707+00:00",
+      "measured_median_mbit_s": {
+        "up_mbit_s": 33.4704,
+        "down_mbit_s": 25.0732
+      },
+      "receipt_sha256": "3c8573ffb09b877e61be4b0c860977d53513dd3c5ef58ac61167cc316357d8db"
+    },
+    "candidate_hot": {
+      "begin": "2026-11-18T17:57:10.908379+00:00",
+      "boot_before": "2026-11-18T17:52:54.3411910Z",
+      "sys_sha256": "600b5d4e9d465c0d51062e48a0ac9bfeb467ca09d911b1048115cc29be7a804c",
+      "size_per_direction": 262144,
+      "rounds": [
+        {
+          "index": 0,
+          "sha256": "5cd75be5d71f60d84d4f09b2c075e83705b9a20f1dbc27e21de7598d14261d62",
+          "up_ms": 69.499,
+          "down_ms": 89.869,
+          "up_mbit_s": 30.1753,
+          "down_mbit_s": 23.3357
+        },
+        {
+          "index": 1,
+          "sha256": "a9bcbc5ad96fec39a6873218d37dd20f154dee61185bd8a4f5711adae1ad0f53",
+          "up_ms": 57.123,
+          "down_ms": 75.928,
+          "up_mbit_s": 36.7129,
+          "down_mbit_s": 27.6203
+        },
+        {
+          "index": 2,
+          "sha256": "43b8a5fa3527c3bd089b6bd340f160f8100b188ba0356cbf900dd798cb84f409",
+          "up_ms": 81.731,
+          "down_ms": 104.923,
+          "up_mbit_s": 25.6592,
+          "down_mbit_s": 19.9875
+        },
+        {
+          "index": 3,
+          "sha256": "0dc840a8456db7ac44c6ea703d66a24c4490eab8590741a220e3b7a90db899e4",
+          "up_ms": 62.889,
+          "down_ms": 68.309,
+          "up_mbit_s": 33.3469,
+          "down_mbit_s": 30.701
+        },
+        {
+          "index": 4,
+          "sha256": "17f4eba945c99b36724a32ac35892f316226b3f8138870e22fc05d0fde3a849a",
+          "up_ms": 46.542,
+          "down_ms": 67.092,
+          "up_mbit_s": 45.0593,
+          "down_mbit_s": 31.2579
+        }
+      ],
+      "completed": true,
+      "scope": "Five file upload/download pairs on one authenticated OpenSSH SFTP connection with SSH compression disabled. The first pair warms the connection. Time stamps come from the host monotonic clock. Rates include SFTP, both OS file paths and Wi-Fi. Every returned payload is compared with its source digest.",
+      "remote_removed": true,
+      "end": "2026-11-18T17:57:12.458876+00:00",
+      "measured_median_mbit_s": {
+        "up_mbit_s": 35.0299,
+        "down_mbit_s": 29.1607
+      },
+      "receipt_sha256": "8f37c79c14be1e1d29f90c4fb84e27df4bbd4f77932c3e347d8ec10ec07aa5cf"
+    },
+    "candidate_after_restart": {
+      "begin": "2026-11-18T18:01:32.355086+00:00",
+      "boot_before": "2026-11-18T17:59:20.7718120Z",
+      "sys_sha256": "600b5d4e9d465c0d51062e48a0ac9bfeb467ca09d911b1048115cc29be7a804c",
+      "size_per_direction": 262144,
+      "rounds": [
+        {
+          "index": 0,
+          "sha256": "5cd75be5d71f60d84d4f09b2c075e83705b9a20f1dbc27e21de7598d14261d62",
+          "up_ms": 76.74,
+          "down_ms": 106.771,
+          "up_mbit_s": 27.328,
+          "down_mbit_s": 19.6416
+        },
+        {
+          "index": 1,
+          "sha256": "a9bcbc5ad96fec39a6873218d37dd20f154dee61185bd8a4f5711adae1ad0f53",
+          "up_ms": 58.556,
+          "down_ms": 77.262,
+          "up_mbit_s": 35.8145,
+          "down_mbit_s": 27.1434
+        },
+        {
+          "index": 2,
+          "sha256": "43b8a5fa3527c3bd089b6bd340f160f8100b188ba0356cbf900dd798cb84f409",
+          "up_ms": 68.678,
+          "down_ms": 83.771,
+          "up_mbit_s": 30.536,
+          "down_mbit_s": 25.0343
+        },
+        {
+          "index": 3,
+          "sha256": "0dc840a8456db7ac44c6ea703d66a24c4490eab8590741a220e3b7a90db899e4",
+          "up_ms": 64.232,
+          "down_ms": 97.223,
+          "up_mbit_s": 32.6496,
+          "down_mbit_s": 21.5705
+        },
+        {
+          "index": 4,
+          "sha256": "17f4eba945c99b36724a32ac35892f316226b3f8138870e22fc05d0fde3a849a",
+          "up_ms": 74.775,
+          "down_ms": 90.636,
+          "up_mbit_s": 28.0462,
+          "down_mbit_s": 23.1382
+        }
+      ],
+      "completed": true,
+      "scope": "Five file upload/download pairs on one authenticated OpenSSH SFTP connection with SSH compression disabled. The first pair warms the connection. Time stamps come from the host monotonic clock. Rates include SFTP, both OS file paths and Wi-Fi. Every returned payload is compared with its source digest.",
+      "remote_removed": true,
+      "end": "2026-11-18T18:01:33.979182+00:00",
+      "measured_median_mbit_s": {
+        "up_mbit_s": 31.5928,
+        "down_mbit_s": 24.0862
+      },
+      "receipt_sha256": "58c15bc5c64cc05ffed5312cebef7f87635cca30a1bd6982c54cacae20d710f9"
+    },
+    "interpretation": "Short SFTP transactions confirm file integrity and link usability in both directions. Samples come from one run and boot per side and do not establish a PHY speed change or a long-run stability gain."
+  },
+  "earlier_radio_evidence": {
+    "reference_wlan_events": [
+      {
+        "disconnected_record": 9763,
+        "utc": "2026-11-18T17:43:34.4426626Z",
+        "reason": "网络被驱动程序断开连接。",
+        "reason_code": "0",
+        "next_connection_record": 9769,
+        "seconds_to_next_connection": 4.604
+      },
+      {
+        "disconnected_record": 9771,
+        "utc": "2026-11-18T17:48:35.8067304Z",
+        "reason": "网络被驱动程序断开连接。",
+        "reason_code": "0",
+        "next_connection_record": 9777,
+        "seconds_to_next_connection": 6.25
+      },
+      {
+        "disconnected_record": 9779,
+        "utc": "2026-11-18T17:50:00.4522647Z",
+        "reason": "网络被驱动程序断开连接。",
+        "reason_code": "0",
+        "next_connection_record": 9785,
+        "seconds_to_next_connection": 4.665
+      }
+    ],
+    "within_one_reference_boot": "2026-11-18T17:34:48.7945080Z",
+    "investigation": "Windows recorded these driver-attributed disconnects followed by automatic reconnects while the original station driver was selected. A registry report can show the last scan timed out and the last join succeeded. The sampled failure marker stayed zero. This evidence does not identify the cause of a separate boot that failed to bring up Wi-Fi or of system-wide unexpected resets."
+  },
+  "independent_review": "Main review and native acceptance completed. Separate Gemini review remains pending.",
+  "candidate_wlan_observation": {
+    "end_utc": "2026-11-18T18:02:19.4505397Z",
+    "begin_utc": "2026-11-18T17:59:20.7718120Z",
+    "disconnects": []
+  },
+  "acceptance": {
+    "selected": "0.5.7.1",
+    "scope": "Report persistence, physical hot rebind, interface and route at Windows startup, and verified file transfers. The source specifically repairs report delivery. Intermittent disassociation and an earlier missing radio on boot remain under investigation.",
+    "cold_power_on_verified": false,
+    "known_package_rollback_verified": true,
+    "device_package_rollback_exercised": false
+  }
+}
