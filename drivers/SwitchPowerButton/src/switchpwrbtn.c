@@ -33,6 +33,9 @@
 #define ONOFFIRQ_EN0_R       0x08
 #define PMC_INTR_POLARITY    (1u << 17)
 #define POLL_MS              50
+#define RECOVERY_MS          50u
+#define SWPWR_MAX_ISR_FAULTS        3u
+#define SWPWR_MAX_RECOVERY_ATTEMPTS 5u
 #define REPORT_ID_SYSTEM     1
 
 /* System Control: Power Down (0x81), Wake Up (0x83), six padding bits. */
@@ -47,11 +50,24 @@ static UCHAR SwPwrReportDescriptor[] = {
 typedef struct _SWPWR_DEVICE {
     LARGE_INTEGER I2cId;
     PULONG Pmc;
+    BOOLEAN PmcPolaritySaved;
+    ULONG OriginalPmcPolarity;
     WDFIOTARGET I2c;
     WDFTIMER Timer;
     WDFINTERRUPT Interrupt;
+    BOOLEAN InD0;
+    BOOLEAN S0IdleAssigned;
+    BOOLEAN IdleStopped;
     BOOLEAN IrqConfigured;
+    BOOLEAN OriginalMasksSaved;
+    BOOLEAN IrqRecoveryPending;
+    BOOLEAN RecoveryTimerArmed;
+    BOOLEAN IrqFailed;
+    BOOLEAN DeviceFailReported;
     UCHAR OriginalTopMask, OriginalGlobalMask, OriginalOnOffMask;
+    UCHAR DeferredOnOffIrq;
+    ULONG IsrFaults;
+    ULONG RecoveryAttempts;
     VHFHANDLE Vhf;
     volatile BOOLEAN Stopping;
     struct swpwr_button_state Button;
@@ -181,6 +197,71 @@ static NTSTATUS SwPwrWriteReg(WDFIOTARGET Target, UCHAR Register, UCHAR Value)
     return (NT_SUCCESS(Status) && Bytes != sizeof(Data)) ? STATUS_DEVICE_PROTOCOL_ERROR : Status;
 }
 
+static VOID SwPwrReport(PSWPWR_DEVICE Dev, UCHAR Buttons);
+
+static VOID SwPwrLockIrq(PSWPWR_DEVICE Dev)
+{
+    if (Dev->Interrupt != NULL) {
+        WdfInterruptAcquireLock(Dev->Interrupt);
+    }
+}
+
+static VOID SwPwrUnlockIrq(PSWPWR_DEVICE Dev)
+{
+    if (Dev->Interrupt != NULL) {
+        WdfInterruptReleaseLock(Dev->Interrupt);
+    }
+}
+
+static VOID SwPwrSetPmcPolarity(PSWPWR_DEVICE Dev)
+{
+    ULONG Value;
+
+    if (Dev->Pmc == NULL) {
+        return;
+    }
+    Value = READ_REGISTER_ULONG(Dev->Pmc);
+    if (!Dev->PmcPolaritySaved) {
+        Dev->OriginalPmcPolarity = Value & PMC_INTR_POLARITY;
+        Dev->PmcPolaritySaved = TRUE;
+    }
+    WRITE_REGISTER_ULONG(Dev->Pmc, Value | PMC_INTR_POLARITY);
+}
+
+static VOID SwPwrReleaseIdleRefLocked(WDFDEVICE Device, PSWPWR_DEVICE Dev)
+{
+    if (Dev->IdleStopped) {
+        Dev->IdleStopped = FALSE;
+        WdfDeviceResumeIdle(Device);
+    }
+}
+
+static VOID SwPwrScheduleRecoveryLocked(WDFDEVICE Device, PSWPWR_DEVICE Dev, ULONG DelayMs)
+{
+    KIRQL Irql;
+    BOOLEAN KeepIdleRef;
+
+    if (!Dev->InD0 || Dev->IrqFailed || !Dev->IrqRecoveryPending || Dev->Timer == NULL || Dev->Stopping) {
+        return;
+    }
+    if (Dev->S0IdleAssigned && !Dev->IdleStopped) {
+        if (NT_SUCCESS(WdfDeviceStopIdle(Device, FALSE))) {
+            Dev->IdleStopped = TRUE;
+        }
+    }
+    KeAcquireSpinLock(&Dev->TimerLock, &Irql);
+    if (!Dev->Stopping && !Dev->RecoveryTimerArmed) {
+        Dev->RecoveryTimerArmed = TRUE;
+        WdfTimerStart(Dev->Timer, WDF_REL_TIMEOUT_IN_MS(DelayMs));
+    }
+    KeepIdleRef = (!Dev->Stopping && Dev->RecoveryTimerArmed);
+    KeReleaseSpinLock(&Dev->TimerLock, Irql);
+
+    if (!KeepIdleRef) {
+        SwPwrReleaseIdleRefLocked(Device, Dev);
+    }
+}
+
 /* Only the ONOFF route is owned here. Keep unrelated PMIC interrupt masks. */
 static NTSTATUS SwPwrSetIrq(PSWPWR_DEVICE Dev, BOOLEAN Enable)
 {
@@ -191,11 +272,17 @@ static NTSTATUS SwPwrSetIrq(PSWPWR_DEVICE Dev, BOOLEAN Enable)
     if (!NT_SUCCESS(Status)) return Status;
 
     if (Enable) {
-        if (!Dev->IrqConfigured) {
+        UCHAR RestoreTop, RestoreGlobal, RestoreOnOff;
+        if (!Dev->OriginalMasksSaved) {
             Dev->OriginalTopMask = Top;
             Dev->OriginalGlobalMask = Global;
             Dev->OriginalOnOffMask = OnOff;
+            Dev->OriginalMasksSaved = TRUE;
         }
+        RestoreTop = (UCHAR)((Top & ~0x02u) | (Dev->OriginalTopMask & 0x02u));
+        RestoreGlobal = (UCHAR)((Global & ~0x01u) | (Dev->OriginalGlobalMask & 0x01u));
+        RestoreOnOff = (UCHAR)((OnOff & ~0x0cu) | (Dev->OriginalOnOffMask & 0x0cu));
+
         /* Mask the top route while acknowledging inherited edges. */
         Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, (UCHAR)(Top | 0x02u));
         if (NT_SUCCESS(Status)) Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Pending);
@@ -206,39 +293,160 @@ static NTSTATUS SwPwrSetIrq(PSWPWR_DEVICE Dev, BOOLEAN Enable)
         if (NT_SUCCESS(Status)) Status = SwPwrWriteReg(Dev->I2c, MAX77620_INTENLBT, (UCHAR)(Global & ~0x01u));
         if (NT_SUCCESS(Status)) Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, (UCHAR)(Top & ~0x02u));
         if (!NT_SUCCESS(Status)) {
-            (VOID)SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, Top);
-            (VOID)SwPwrWriteReg(Dev->I2c, MAX77620_ONOFFIRQM, OnOff);
-            (VOID)SwPwrWriteReg(Dev->I2c, MAX77620_INTENLBT, Global);
+            NTSTATUS Rollback = SwPwrWriteReg(Dev->I2c, MAX77620_ONOFFIRQM, RestoreOnOff);
+            if (NT_SUCCESS(Rollback)) {
+                Rollback = SwPwrWriteReg(Dev->I2c, MAX77620_INTENLBT, RestoreGlobal);
+            }
+            if (NT_SUCCESS(Rollback)) {
+                (VOID)SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, RestoreTop);
+            }
         }
         Dev->IrqConfigured = NT_SUCCESS(Status);
-    } else if (Dev->IrqConfigured) {
-        Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM,
-                               (UCHAR)((Top & ~0x02u) | (Dev->OriginalTopMask & 0x02u)));
-        if (NT_SUCCESS(Status)) Status = SwPwrWriteReg(Dev->I2c, MAX77620_ONOFFIRQM,
-                                                       (UCHAR)((OnOff & ~0x0cu) | (Dev->OriginalOnOffMask & 0x0cu)));
-        if (NT_SUCCESS(Status)) Status = SwPwrWriteReg(Dev->I2c, MAX77620_INTENLBT,
-                                                       (UCHAR)((Global & ~0x01u) | (Dev->OriginalGlobalMask & 0x01u)));
-        if (NT_SUCCESS(Status)) Dev->IrqConfigured = FALSE;
+    } else if (Dev->IrqConfigured || Dev->OriginalMasksSaved) {
+        UCHAR RestoreTop = (UCHAR)((Top & ~0x02u) | (Dev->OriginalTopMask & 0x02u));
+        UCHAR RestoreOnOff = (UCHAR)((OnOff & ~0x0cu) | (Dev->OriginalOnOffMask & 0x0cu));
+        UCHAR RestoreGlobal = (UCHAR)((Global & ~0x01u) | (Dev->OriginalGlobalMask & 0x01u));
+
+        /* Keep ONOFF masked at IRQTOPM while restoring EN0 and global bits. */
+        Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, (UCHAR)(Top | 0x02u));
+        if (NT_SUCCESS(Status)) {
+            Dev->IrqConfigured = FALSE;
+            Status = SwPwrWriteReg(Dev->I2c, MAX77620_ONOFFIRQM, RestoreOnOff);
+        }
+        if (NT_SUCCESS(Status)) Status = SwPwrWriteReg(Dev->I2c, MAX77620_INTENLBT, RestoreGlobal);
+        if (NT_SUCCESS(Status)) Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, RestoreTop);
+        if (NT_SUCCESS(Status)) {
+            Dev->OriginalMasksSaved = FALSE;
+        }
     }
     return Status;
+}
+
+/* Explicitly mask the ONOFF route on I2C fault without overwriting saved masks. */
+static NTSTATUS SwPwrMaskOnOffRoute(PSWPWR_DEVICE Dev)
+{
+    UCHAR Top = 0, OnOff = 0;
+    NTSTATUS Status = SwPwrReadReg(Dev->I2c, MAX77620_IRQTOPM, &Top);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
+    if (!Dev->OriginalMasksSaved) {
+        UCHAR Global = 0;
+        if (NT_SUCCESS(SwPwrReadReg(Dev->I2c, MAX77620_INTENLBT, &Global)) &&
+            NT_SUCCESS(SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQM, &OnOff))) {
+            Dev->OriginalTopMask = Top;
+            Dev->OriginalGlobalMask = Global;
+            Dev->OriginalOnOffMask = OnOff;
+            Dev->OriginalMasksSaved = TRUE;
+        }
+    }
+    Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, (UCHAR)(Top | 0x02u));
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
+    if (NT_SUCCESS(SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQM, &OnOff))) {
+        (VOID)SwPwrWriteReg(Dev->I2c, MAX77620_ONOFFIRQM,
+                            (UCHAR)(OnOff | ONOFFIRQ_EN0_F | ONOFFIRQ_EN0_R));
+    }
+    return STATUS_SUCCESS;
+}
+
+/* Acknowledge any latched ONOFFIRQ edge and re-arm under the passive IRQ lock. */
+static NTSTATUS SwPwrRecoverIrqLocked(PSWPWR_DEVICE Dev, BOOLEAN DeliverPending)
+{
+    UCHAR Top = 0, Global = 0, OnOff = 0, Pending = 0, Edge;
+    NTSTATUS Status = SwPwrReadReg(Dev->I2c, MAX77620_IRQTOPM, &Top);
+    if (NT_SUCCESS(Status)) Status = SwPwrReadReg(Dev->I2c, MAX77620_INTENLBT, &Global);
+    if (NT_SUCCESS(Status)) Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQM, &OnOff);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
+    if (!Dev->OriginalMasksSaved) {
+        Dev->OriginalTopMask = Top;
+        Dev->OriginalGlobalMask = Global;
+        Dev->OriginalOnOffMask = OnOff;
+        Dev->OriginalMasksSaved = TRUE;
+    }
+
+    Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, (UCHAR)(Top | 0x02u));
+    if (NT_SUCCESS(Status)) {
+        Dev->IrqConfigured = FALSE;
+        Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Pending);
+    }
+    if (NT_SUCCESS(Status)) {
+        Dev->DeferredOnOffIrq |= (UCHAR)(Pending & (ONOFFIRQ_EN0_F | ONOFFIRQ_EN0_R));
+        Status = SwPwrWriteReg(Dev->I2c, MAX77620_ONOFFIRQM,
+                               (UCHAR)((OnOff | ONOFFIRQ_EN0_F) & ~ONOFFIRQ_EN0_R));
+    }
+    if (NT_SUCCESS(Status)) {
+        Status = SwPwrWriteReg(Dev->I2c, MAX77620_INTENLBT, (UCHAR)(Global & ~0x01u));
+    }
+    if (NT_SUCCESS(Status)) {
+        Status = SwPwrWriteReg(Dev->I2c, MAX77620_IRQTOPM, (UCHAR)(Top & ~0x02u));
+    }
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
+
+    Dev->IrqConfigured = TRUE;
+    Dev->IrqRecoveryPending = FALSE;
+    Dev->IsrFaults = 0;
+    Dev->RecoveryAttempts = 0;
+    InterlockedExchange(&Dev->LastIrqStatus, STATUS_SUCCESS);
+
+    Edge = Dev->DeferredOnOffIrq;
+    Dev->DeferredOnOffIrq = 0;
+    if (Edge != 0) {
+        InterlockedExchange(&Dev->LastOnOffIrq, Edge);
+        if (DeliverPending && Dev->Vhf != NULL && (Edge & ONOFFIRQ_EN0_R) != 0) {
+            InterlockedIncrement(&Dev->Presses);
+            SwPwrReport(Dev, SwPwrPressReport(Dev));
+            SwPwrReport(Dev, 0);
+        }
+    }
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS SwPwrEvtD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Previous)
 {
     PSWPWR_DEVICE Dev = SwPwrGetDevice(Device);
+    WDFIOTARGET Opened = NULL;
     NTSTATUS Status = STATUS_SUCCESS;
-    UNREFERENCED_PARAMETER(Previous);
 
-    if (Dev->Pmc != NULL) {
-        WRITE_REGISTER_ULONG(Dev->Pmc, READ_REGISTER_ULONG(Dev->Pmc) | PMC_INTR_POLARITY);
-    }
     if (Dev->I2c == NULL) {
-        Status = SwPwrOpenTarget(Device, Dev->I2cId, &Dev->I2c);
+        Status = SwPwrOpenTarget(Device, Dev->I2cId, &Opened);
+        if (!NT_SUCCESS(Status)) {
+            return Status;
+        }
     }
-    /* On resume preserve any latched wake event in ONOFFIRQ for the passive ISR. */
-    if (NT_SUCCESS(Status) && Dev->Interrupt != NULL && !Dev->IrqConfigured) {
-        Status = SwPwrSetIrq(Dev, TRUE);
+    SwPwrLockIrq(Dev);
+    if (Opened != NULL) {
+        Dev->I2c = Opened;
     }
+    if (Dev->Interrupt != NULL) {
+        SwPwrSetPmcPolarity(Dev);
+        if (Previous == WdfPowerDeviceD3Final) {
+            Dev->IrqConfigured = FALSE;
+            Dev->IrqFailed = FALSE;
+            Dev->DeviceFailReported = FALSE;
+            Dev->IsrFaults = 0;
+            Dev->RecoveryAttempts = 0;
+            Dev->IrqRecoveryPending = FALSE;
+            Dev->DeferredOnOffIrq = 0;
+        }
+        /* On resume preserve any latched wake event in ONOFFIRQ for the passive ISR. */
+        if (Dev->IrqRecoveryPending || Dev->IrqFailed) {
+            Dev->IrqFailed = FALSE;
+            Dev->DeviceFailReported = FALSE;
+            Dev->IsrFaults = 0;
+            Dev->RecoveryAttempts = 0;
+            Status = SwPwrRecoverIrqLocked(Dev, FALSE);
+        } else if (!Dev->IrqConfigured) {
+            Status = SwPwrSetIrq(Dev, TRUE);
+        }
+    }
+    Dev->InD0 = NT_SUCCESS(Status);
+    SwPwrUnlockIrq(Dev);
     return Status;
 }
 
@@ -246,13 +454,35 @@ NTSTATUS SwPwrEvtD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Target)
 {
     PSWPWR_DEVICE Dev = SwPwrGetDevice(Device);
     POWER_ACTION Action = WdfDeviceGetSystemPowerAction(Device);
-    if (Dev->IrqConfigured &&
-        (Target == WdfPowerDeviceD3Final ||
-         Action == PowerActionShutdown ||
-         Action == PowerActionShutdownReset ||
-         Action == PowerActionShutdownOff)) {
-        return SwPwrSetIrq(Dev, FALSE);
+    BOOLEAN Disarm = (Target == WdfPowerDeviceD3Final ||
+                      Action == PowerActionHibernate ||
+                      Action == PowerActionShutdown ||
+                      Action == PowerActionShutdownReset ||
+                      Action == PowerActionShutdownOff);
+
+    SwPwrLockIrq(Dev);
+    SwPwrReleaseIdleRefLocked(Device, Dev);
+    if (Disarm) {
+        Dev->IrqRecoveryPending = FALSE;
+        Dev->DeferredOnOffIrq = 0;
+        if ((Dev->IrqConfigured || Dev->OriginalMasksSaved) && Dev->I2c != NULL) {
+            NTSTATUS DisarmStatus = SwPwrSetIrq(Dev, FALSE);
+            InterlockedExchange(&Dev->LastIrqStatus, DisarmStatus);
+        }
+        /* Teardown/power-off must complete cleanly even if the I2C bus is dead;
+         * reset IRQ state so a subsequent start or S4 resume re-arms fresh. */
+        Dev->IrqConfigured = FALSE;
+        Dev->OriginalMasksSaved = FALSE;
+        Dev->IrqFailed = FALSE;
+        Dev->DeviceFailReported = FALSE;
+        Dev->IsrFaults = 0;
+        Dev->RecoveryAttempts = 0;
+    } else if (Dev->Interrupt != NULL && Dev->IrqRecoveryPending && !Dev->IrqFailed && Dev->I2c != NULL) {
+        NTSTATUS RecoverStatus = SwPwrRecoverIrqLocked(Dev, FALSE);
+        InterlockedExchange(&Dev->LastIrqStatus, RecoverStatus);
     }
+    Dev->InD0 = FALSE;
+    SwPwrUnlockIrq(Dev);
     return STATUS_SUCCESS;
 }
 
@@ -288,13 +518,80 @@ static VOID SwPwrReport(PSWPWR_DEVICE Dev, UCHAR Buttons)
     InterlockedExchange(&Dev->LastReportStatus, Status);
 }
 
+static VOID SwPwrRunIrqRecovery(WDFDEVICE Device, PSWPWR_DEVICE Dev)
+{
+    KIRQL Irql;
+    NTSTATUS Status = STATUS_SUCCESS;
+    BOOLEAN ShouldRetry = FALSE;
+    BOOLEAN FailDevice = FALSE;
+    BOOLEAN TraceRecovery = FALSE;
+    BOOLEAN Ready = FALSE;
+    ULONG NextDelayMs = RECOVERY_MS;
+
+    KeAcquireSpinLock(&Dev->TimerLock, &Irql);
+    Dev->RecoveryTimerArmed = FALSE;
+    if (Dev->Stopping) {
+        KeReleaseSpinLock(&Dev->TimerLock, Irql);
+        return;
+    }
+    KeReleaseSpinLock(&Dev->TimerLock, Irql);
+
+    SwPwrLockIrq(Dev);
+    if (Dev->InD0 && !Dev->Stopping && Dev->IrqRecoveryPending && !Dev->IrqFailed && Dev->I2c != NULL) {
+        TraceRecovery = TRUE;
+        Status = SwPwrRecoverIrqLocked(Dev, TRUE);
+        InterlockedExchange(&Dev->LastIrqStatus, Status);
+        if (NT_SUCCESS(Status)) {
+            SwPwrReleaseIdleRefLocked(Device, Dev);
+        } else {
+            Dev->RecoveryAttempts++;
+            if (Dev->RecoveryAttempts >= SWPWR_MAX_RECOVERY_ATTEMPTS) {
+                Dev->IrqRecoveryPending = FALSE;
+                Dev->IrqFailed = TRUE;
+                SwPwrReleaseIdleRefLocked(Device, Dev);
+                if (!Dev->DeviceFailReported) {
+                    Dev->DeviceFailReported = TRUE;
+                    FailDevice = TRUE;
+                }
+            } else {
+                ShouldRetry = TRUE;
+                NextDelayMs = RECOVERY_MS * (Dev->RecoveryAttempts + 1u);
+            }
+        }
+    } else {
+        SwPwrReleaseIdleRefLocked(Device, Dev);
+    }
+    if (ShouldRetry) {
+        SwPwrScheduleRecoveryLocked(Device, Dev, NextDelayMs);
+    }
+    Ready = Dev->IrqConfigured;
+    SwPwrUnlockIrq(Dev);
+
+    if (TraceRecovery) {
+        SwPwrTrace(L"WakeIrqReady", Ready);
+        SwPwrTrace(L"LastOnOffIrq", (ULONG)InterlockedCompareExchange(&Dev->LastOnOffIrq, 0, 0));
+        SwPwrTrace(L"WakeIrqError", (ULONG)InterlockedCompareExchange(&Dev->LastIrqStatus, 0, 0));
+        SwPwrTrace(L"Presses", (ULONG)InterlockedCompareExchange(&Dev->Presses, 0, 0));
+        SwPwrFlushReportTraces(Dev);
+    }
+    if (FailDevice) {
+        WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
+    }
+}
+
 VOID SwPwrEvtTimer(WDFTIMER Timer)
 {
-    PSWPWR_DEVICE Dev = SwPwrGetDevice(SwPwrGetTimer(Timer)->Device);
+    WDFDEVICE Device = SwPwrGetTimer(Timer)->Device;
+    PSWPWR_DEVICE Dev = SwPwrGetDevice(Device);
     UCHAR Irq = 0, Stat = 0;
     BOOLEAN Held;
     KIRQL Irql;
     NTSTATUS Status;
+
+    if (Dev->Interrupt != NULL) {
+        SwPwrRunIrqRecovery(Device, Dev);
+        return;
+    }
 
     if (Dev->Stopping) return;
     Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Irq);
@@ -338,13 +635,37 @@ BOOLEAN SwPwrEvtIsr(WDFINTERRUPT Interrupt, ULONG Message)
     NTSTATUS Status;
     UNREFERENCED_PARAMETER(Message);
 
+    if (!Dev->InD0 || Dev->IrqFailed || !Dev->IrqConfigured || Dev->I2c == NULL) {
+        return FALSE;
+    }
     Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Edge);
     InterlockedExchange(&Dev->LastIrqStatus, Status);
     if (!NT_SUCCESS(Status)) {
-        /* Prevent an unacknowledged level IRQ from continuously waking CPUs. */
-        (VOID)SwPwrSetIrq(Dev, FALSE);
+        /* Explicitly silence our ONOFF route without overwriting saved masks.
+         * Never claim an unverified read failure on a shared level IRQ. */
+        if (NT_SUCCESS(SwPwrMaskOnOffRoute(Dev))) {
+            Dev->IrqConfigured = FALSE;
+            if (!Dev->IrqRecoveryPending) {
+                Dev->IrqRecoveryPending = TRUE;
+                Dev->RecoveryAttempts = 0;
+            }
+        } else {
+            if (!Dev->IrqRecoveryPending) {
+                Dev->IrqRecoveryPending = TRUE;
+                Dev->RecoveryAttempts = 0;
+            }
+            if (++Dev->IsrFaults >= SWPWR_MAX_ISR_FAULTS) {
+                Dev->IrqRecoveryPending = FALSE;
+                Dev->IrqFailed = TRUE;
+            }
+        }
         (VOID)WdfInterruptQueueWorkItemForIsr(Interrupt);
-        return TRUE;
+        return FALSE;
+    }
+    Dev->IsrFaults = 0;
+    if (Dev->IrqRecoveryPending) {
+        Dev->IrqRecoveryPending = FALSE;
+        Dev->RecoveryAttempts = 0;
     }
     if ((Edge & (ONOFFIRQ_EN0_F | ONOFFIRQ_EN0_R)) == 0) {
         return FALSE;
@@ -362,14 +683,39 @@ BOOLEAN SwPwrEvtIsr(WDFINTERRUPT Interrupt, ULONG Message)
 
 VOID SwPwrEvtInterruptWorkItem(WDFINTERRUPT Interrupt, WDFOBJECT Object)
 {
-    PSWPWR_DEVICE Dev = SwPwrGetDevice(WdfInterruptGetDevice(Interrupt));
+    WDFDEVICE Device = WdfInterruptGetDevice(Interrupt);
+    PSWPWR_DEVICE Dev = SwPwrGetDevice(Device);
+    BOOLEAN FailDevice = FALSE;
+    BOOLEAN Ready;
     UNREFERENCED_PARAMETER(Object);
+
+    WdfInterruptAcquireLock(Interrupt);
+    if (Dev->InD0 && !Dev->Stopping) {
+        if (Dev->IrqFailed) {
+            SwPwrReleaseIdleRefLocked(Device, Dev);
+            if (!Dev->DeviceFailReported) {
+                Dev->DeviceFailReported = TRUE;
+                FailDevice = TRUE;
+            }
+        } else if (Dev->IrqRecoveryPending) {
+            SwPwrScheduleRecoveryLocked(Device, Dev, RECOVERY_MS);
+        } else {
+            SwPwrReleaseIdleRefLocked(Device, Dev);
+        }
+    }
+    Ready = Dev->IrqConfigured;
+    WdfInterruptReleaseLock(Interrupt);
+
     /* Registry I/O runs outside the passive ISR lock and D0 transition. */
-    SwPwrTrace(L"WakeIrqReady", Dev->IrqConfigured);
+    SwPwrTrace(L"WakeIrqReady", Ready);
     SwPwrTrace(L"LastOnOffIrq", (ULONG)InterlockedCompareExchange(&Dev->LastOnOffIrq, 0, 0));
     SwPwrTrace(L"WakeIrqError", (ULONG)InterlockedCompareExchange(&Dev->LastIrqStatus, 0, 0));
     SwPwrTrace(L"Presses", (ULONG)InterlockedCompareExchange(&Dev->Presses, 0, 0));
     SwPwrFlushReportTraces(Dev);
+
+    if (FailDevice) {
+        WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
+    }
 }
 
 /* ------------------------------------------------------------------- PnP */
@@ -379,6 +725,8 @@ NTSTATUS SwPwrEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
     PSWPWR_DEVICE Dev = SwPwrGetDevice(Device);
     ULONG Count = WdfCmResourceListGetCount(Translated), Index;
 
+    Dev->I2cId.QuadPart = 0;
+    Dev->S0IdleAssigned = FALSE;
     for (Index = 0; Index < Count; ++Index) {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = WdfCmResourceListGetDescriptor(Translated, Index);
         if (Desc == NULL) {
@@ -393,7 +741,6 @@ NTSTATUS SwPwrEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
             if (Dev->Pmc == NULL) {
                 return STATUS_INSUFFICIENT_RESOURCES;
             }
-            WRITE_REGISTER_ULONG(Dev->Pmc, READ_REGISTER_ULONG(Dev->Pmc) | PMC_INTR_POLARITY);
         }
         if (Desc->Type == CmResourceTypeConnection &&
             Desc->u.Connection.Class == CM_RESOURCE_CONNECTION_CLASS_SERIAL &&
@@ -433,24 +780,21 @@ NTSTATUS SwPwrEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
         Status = WdfDeviceAssignS0IdleSettings(Device, &Idle);
         SwPwrTrace(L"S0WakePolicyStatus", (ULONG)Status);
         /* Per KMDF's contract, lack of bus wake support keeps D0 usable. */
-        if (Status == STATUS_POWER_STATE_INVALID) {
-            return STATUS_SUCCESS;
-        }
-        if (!NT_SUCCESS(Status)) {
+        if (NT_SUCCESS(Status)) {
+            Dev->S0IdleAssigned = TRUE;
+            WDF_DEVICE_POWER_POLICY_WAKE_SETTINGS_INIT(&Wake);
+            Wake.DxState = PowerDeviceD3;
+            Wake.UserControlOfWakeSettings = WakeDoNotAllowUserControl;
+            Wake.Enabled = WdfTrue;
+            Status = WdfDeviceAssignSxWakeSettings(Device, &Wake);
+            SwPwrTrace(L"SxWakePolicyStatus", (ULONG)Status);
+            if (!NT_SUCCESS(Status) && Status != STATUS_POWER_STATE_INVALID) {
+                return Status;
+            }
+        } else if (Status != STATUS_POWER_STATE_INVALID) {
             return Status;
         }
-        WDF_DEVICE_POWER_POLICY_WAKE_SETTINGS_INIT(&Wake);
-        Wake.DxState = PowerDeviceD3;
-        Wake.UserControlOfWakeSettings = WakeDoNotAllowUserControl;
-        Wake.Enabled = WdfTrue;
-        Status = WdfDeviceAssignSxWakeSettings(Device, &Wake);
-        SwPwrTrace(L"SxWakePolicyStatus", (ULONG)Status);
-        if (Status == STATUS_POWER_STATE_INVALID) {
-            return STATUS_SUCCESS;
-        }
-        if (!NT_SUCCESS(Status)) {
-            return Status;
-        }
+        SwPwrSetPmcPolarity(Dev);
     }
     return STATUS_SUCCESS;
 }
@@ -459,10 +803,26 @@ NTSTATUS SwPwrEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
 {
     PSWPWR_DEVICE Dev = SwPwrGetDevice(Device);
     UNREFERENCED_PARAMETER(Translated);
+
+    Dev->InD0 = FALSE;
+    Dev->S0IdleAssigned = FALSE;
     if (Dev->Pmc != NULL) {
+        if (Dev->PmcPolaritySaved) {
+            ULONG Value = READ_REGISTER_ULONG(Dev->Pmc);
+            WRITE_REGISTER_ULONG(Dev->Pmc, (Value & ~PMC_INTR_POLARITY) | Dev->OriginalPmcPolarity);
+            Dev->PmcPolaritySaved = FALSE;
+        }
         MmUnmapIoSpace(Dev->Pmc, sizeof(ULONG));
         Dev->Pmc = NULL;
     }
+    if (Dev->I2c != NULL) {
+        WdfIoTargetClose(Dev->I2c);
+        WdfObjectDelete(Dev->I2c);
+        Dev->I2c = NULL;
+    }
+    /* KMDF deletes PrepareHardware-created WDFINTERRUPT objects after ReleaseHardware. */
+    Dev->Interrupt = NULL;
+    Dev->I2cId.QuadPart = 0;
     return STATUS_SUCCESS;
 }
 
@@ -488,31 +848,39 @@ NTSTATUS SwPwrEvtSelfManagedIoInit(WDFDEVICE Device)
     if (Dev->Interrupt == NULL) {
         (VOID)SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Irq);    /* drop edges latched before Windows */
     }
-    SwPwrTrace(L"OnOffStatAtStart", Stat);
-    SwPwrTrace(L"OnOffIrqAtStart", Irq);
-    SwPwrTrace(L"WakeIrqReady", Dev->IrqConfigured);
+    {
+        BOOLEAN Ready;
+        SwPwrLockIrq(Dev);
+        Ready = Dev->IrqConfigured;
+        SwPwrUnlockIrq(Dev);
+        SwPwrTrace(L"OnOffStatAtStart", Stat);
+        SwPwrTrace(L"OnOffIrqAtStart", Irq);
+        SwPwrTrace(L"WakeIrqReady", Ready);
+    }
     Dev->Button.suppress_held = (Stat & ONOFFSTAT_EN0) != 0;
 
     if (Dev->Vhf == NULL) {
+        VHFHANDLE Vhf = NULL;
         VHF_CONFIG_INIT(&Config, WdfDeviceWdmGetDeviceObject(Device), sizeof(SwPwrReportDescriptor),
                         SwPwrReportDescriptor);
         Config.VhfClientContext = Dev;
         Config.VendorID = 0x057E;       /* Nintendo */
         Config.ProductID = 0x5601;
         Config.VersionNumber = 0x0005;
-        Status = VhfCreate(&Config, &Dev->Vhf);
+        Status = VhfCreate(&Config, &Vhf);
         SwPwrTrace(L"VhfCreateStatus", (ULONG)Status);
         if (!NT_SUCCESS(Status)) {
-            Dev->Vhf = NULL;
             return Status;
         }
-        Status = VhfStart(Dev->Vhf);
+        Status = VhfStart(Vhf);
         SwPwrTrace(L"VhfStartStatus", (ULONG)Status);
         if (!NT_SUCCESS(Status)) {
-            VhfDelete(Dev->Vhf, TRUE);
-            Dev->Vhf = NULL;
+            VhfDelete(Vhf, TRUE);
             return Status;
         }
+        SwPwrLockIrq(Dev);
+        Dev->Vhf = Vhf;
+        SwPwrUnlockIrq(Dev);
     }
     if (Dev->Timer == NULL) {
         WDF_TIMER_CONFIG TimerConfig;
@@ -548,8 +916,12 @@ NTSTATUS SwPwrEvtSuspend(WDFDEVICE Device)
     KIRQL Irql;
     KeAcquireSpinLock(&Dev->TimerLock, &Irql);
     Dev->Stopping = TRUE;
+    Dev->RecoveryTimerArmed = FALSE;
     KeReleaseSpinLock(&Dev->TimerLock, Irql);
     if (Dev->Timer != NULL) WdfTimerStop(Dev->Timer, TRUE);
+    SwPwrLockIrq(Dev);
+    SwPwrReleaseIdleRefLocked(Device, Dev);
+    SwPwrUnlockIrq(Dev);
     if (Dev->Button.held && Dev->Vhf != NULL) {
         SwPwrReport(Dev, 0);
         SwPwrFlushReportTraces(Dev);
@@ -567,8 +939,27 @@ NTSTATUS SwPwrEvtRestart(WDFDEVICE Device)
     NTSTATUS Status;
 
     if (Dev->Interrupt != NULL) {
+        BOOLEAN FailDevice = FALSE;
+        SwPwrLockIrq(Dev);
+        KeAcquireSpinLock(&Dev->TimerLock, &Irql);
         Dev->Stopping = FALSE;
+        KeReleaseSpinLock(&Dev->TimerLock, Irql);
+        if (Dev->InD0) {
+            if (Dev->IrqFailed) {
+                SwPwrReleaseIdleRefLocked(Device, Dev);
+                if (!Dev->DeviceFailReported) {
+                    Dev->DeviceFailReported = TRUE;
+                    FailDevice = TRUE;
+                }
+            } else if (Dev->IrqRecoveryPending) {
+                SwPwrScheduleRecoveryLocked(Device, Dev, RECOVERY_MS);
+            }
+        }
+        SwPwrUnlockIrq(Dev);
         SwPwrTrace(L"Suspended", 0);
+        if (FailDevice) {
+            WdfDeviceSetFailed(Device, WdfDeviceFailedAttemptRestart);
+        }
         return STATUS_SUCCESS; /* no 50 ms polling timer in the wake-interrupt profile */
     }
     Status = SwPwrReadReg(Dev->I2c, MAX77620_ONOFFIRQ, &Irq);
@@ -588,19 +979,30 @@ NTSTATUS SwPwrEvtRestart(WDFDEVICE Device)
 VOID SwPwrEvtSelfManagedIoCleanup(WDFDEVICE Device)
 {
     PSWPWR_DEVICE Dev = SwPwrGetDevice(Device);
+    VHFHANDLE Vhf;
+    WDFIOTARGET I2c;
+
     (VOID)SwPwrEvtSuspend(Device);
     if (Dev->DisplayCallback != NULL) {
         PoUnregisterPowerSettingCallback(Dev->DisplayCallback);
         Dev->DisplayCallback = NULL;
     }
-    if (Dev->Vhf != NULL) {
-        VhfDelete(Dev->Vhf, TRUE);
-        Dev->Vhf = NULL;
+    SwPwrLockIrq(Dev);
+    Dev->InD0 = FALSE;
+    Dev->IrqRecoveryPending = FALSE;
+    Dev->DeferredOnOffIrq = 0;
+    SwPwrReleaseIdleRefLocked(Device, Dev);
+    Vhf = Dev->Vhf;
+    Dev->Vhf = NULL;
+    I2c = Dev->I2c;
+    Dev->I2c = NULL;
+    SwPwrUnlockIrq(Dev);
+    if (Vhf != NULL) {
+        VhfDelete(Vhf, TRUE);
     }
-    if (Dev->I2c != NULL) {
-        WdfIoTargetClose(Dev->I2c);
-        WdfObjectDelete(Dev->I2c);
-        Dev->I2c = NULL;
+    if (I2c != NULL) {
+        WdfIoTargetClose(I2c);
+        WdfObjectDelete(I2c);
     }
 }
 

@@ -195,18 +195,29 @@ static VOID TegraI2cWriteClock(PTEGRA_I2C_DEVICE Dev, ULONG Offset, ULONG Value)
     WRITE_REGISTER_ULONG((PULONG)(Dev->Car + Offset), Value);
 }
 
+static BOOLEAN TegraI2cClockReady(PTEGRA_I2C_DEVICE Dev)
+{
+    const TEGRA_I2C_CLOCK *Clock = Dev->Clock;
+    return (BOOLEAN)((TegraI2cReadClock(Dev, Clock->Enable) & Clock->Mask) != 0 &&
+                     (TegraI2cReadClock(Dev, Clock->Reset) & Clock->Mask) == 0 &&
+                     TegraI2cReadClock(Dev, Clock->Source) == Dev->SavedSource);
+}
+
 /* Caller owns the I2C5/SD gate, and SpbCx has quiesced this controller. */
 static NTSTATUS TegraI2cSaveContext(PTEGRA_I2C_DEVICE Dev)
 {
-    Dev->ContextValid = FALSE;
+    ULONG SavedSource, Saved[RTL_NUMBER_OF(TegraI2cContextRegisters)];
     if (!Dev->Clock || !Dev->Car || !Dev->Base) return STATUS_DEVICE_NOT_READY;
     if (!(TegraI2cReadClock(Dev, Dev->Clock->Enable) & Dev->Clock->Mask) ||
         (TegraI2cReadClock(Dev, Dev->Clock->Reset) & Dev->Clock->Mask))
         return STATUS_DEVICE_NOT_READY;
     if (!TegraI2cWaitClear(Dev, I2C_STATUS, 0x100, 20000)) return STATUS_DEVICE_BUSY;
-    Dev->SavedSource = TegraI2cReadClock(Dev, Dev->Clock->Source);
+    SavedSource = TegraI2cReadClock(Dev, Dev->Clock->Source);
     for (ULONG i = 0; i < RTL_NUMBER_OF(TegraI2cContextRegisters); ++i)
-        Dev->Saved[i] = RdReg(Dev, TegraI2cContextRegisters[i]);
+        Saved[i] = RdReg(Dev, TegraI2cContextRegisters[i]);
+    Dev->SavedSource = SavedSource;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(TegraI2cContextRegisters); ++i)
+        Dev->Saved[i] = Saved[i];
     Dev->ContextValid = TRUE;
     return STATUS_SUCCESS;
 }
@@ -216,7 +227,8 @@ static NTSTATUS TegraI2cRestoreContext(PTEGRA_I2C_DEVICE Dev)
     const TEGRA_I2C_CLOCK *Clock = Dev->Clock;
     if (!Dev->ContextValid || !Clock || !Dev->Car || !Dev->Base)
         return STATUS_DEVICE_NOT_READY;
-    if (Dev->ResumePending) {
+    if (Dev->ResumePending || !TegraI2cClockReady(Dev)) {
+        Dev->ResumePending = TRUE;
         /* Switchroot enables the bus clock and resets the controller before
          * reinitializing packet mode. This preserves the inherited source;
          * platform/firmware restoration owns its parent PLL and oscillator. */
@@ -228,10 +240,10 @@ static NTSTATUS TegraI2cRestoreContext(PTEGRA_I2C_DEVICE Dev)
         TegraI2cWriteClock(Dev, Clock->ResetClear, Clock->Mask);
         KeStallExecutionProcessor(2);
     }
-    if (!(TegraI2cReadClock(Dev, Clock->Enable) & Clock->Mask) ||
-        (TegraI2cReadClock(Dev, Clock->Reset) & Clock->Mask) ||
-        TegraI2cReadClock(Dev, Clock->Source) != Dev->SavedSource)
+    if (!TegraI2cClockReady(Dev)) {
+        Dev->ResumePending = TRUE;
         return STATUS_DEVICE_POWER_FAILURE;
+    }
 
     /* Never replay FIFO payloads, command addresses or a pending SEND bit.
      * Only stable timing/configuration is restored; this driver polls IRQs. */
@@ -243,10 +255,16 @@ static NTSTATUS TegraI2cRestoreContext(PTEGRA_I2C_DEVICE Dev)
         WrReg(Dev, Register, Value);
     }
     WrReg(Dev, I2C_CONFIG_LOAD, CONFIG_LOAD_ALL);
-    if (!TegraI2cWaitClear(Dev, I2C_CONFIG_LOAD, 1, 10000)) return STATUS_IO_TIMEOUT;
+    if (!TegraI2cWaitClear(Dev, I2C_CONFIG_LOAD, 1, 10000)) {
+        Dev->ResumePending = TRUE;
+        return STATUS_IO_TIMEOUT;
+    }
     WrReg(Dev, I2C_INT_STATUS, 0xFFFFFFFF);
     WrReg(Dev, I2C_FIFO_CONTROL, RdReg(Dev, I2C_FIFO_CONTROL) | FIFO_FLUSH_TX_RX);
-    if (!TegraI2cWaitClear(Dev, I2C_FIFO_CONTROL, FIFO_FLUSH_TX_RX, 10000)) return STATUS_IO_TIMEOUT;
+    if (!TegraI2cWaitClear(Dev, I2C_FIFO_CONTROL, FIFO_FLUSH_TX_RX, 10000)) {
+        Dev->ResumePending = TRUE;
+        return STATUS_IO_TIMEOUT;
+    }
     Dev->ResumePending = FALSE;
     return STATUS_SUCCESS;
 }
@@ -289,8 +307,7 @@ static NTSTATUS TegraI2cTransfer(PTEGRA_I2C_DEVICE Dev, USHORT Address, BOOLEAN 
         return STATUS_INVALID_PARAMETER;
     }
     if (Dev->ContextValid && Dev->Clock != NULL && Dev->Car != NULL &&
-        (!(TegraI2cReadClock(Dev, Dev->Clock->Enable) & Dev->Clock->Mask) ||
-         (TegraI2cReadClock(Dev, Dev->Clock->Reset) & Dev->Clock->Mask) ||
+        (Dev->ResumePending || !TegraI2cClockReady(Dev) ||
          (RdReg(Dev, I2C_CNFG) & CNFG_PACKET_MODE) == 0)) {
         Dev->ResumePending = TRUE;
         NTSTATUS RestoreStatus = TegraI2cRestoreContext(Dev);
@@ -554,10 +571,11 @@ NTSTATUS TegraI2cEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRES
         Dev->SdGate = TegraI2c5OpenGate(&Dev->SdGateHandle);
         if (Dev->SdGate == NULL) return STATUS_INSUFFICIENT_RESOURCES;
     }
+    Dev->ContextValid = FALSE;
+    Dev->ResumePending = FALSE;
     NTSTATUS GateStatus = TegraI2c5Acquire(Dev->SdGate);
     if (!NT_SUCCESS(GateStatus)) return GateStatus;
     NTSTATUS Status = TegraI2cSaveContext(Dev);
-    Dev->ResumePending = FALSE;
     TegraI2c5Release(Dev->SdGate);
     TegraI2cTrace(Dev, L"ResourceCount", Count);
     return Status;
@@ -586,9 +604,16 @@ NTSTATUS TegraI2cEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
 NTSTATUS TegraI2cEvtD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState)
 {
     PTEGRA_I2C_DEVICE Dev = TegraI2cGetDevice(Device);
-    UNREFERENCED_PARAMETER(PreviousState);
+    if (PreviousState != WdfPowerDeviceD3Final && Dev->ContextValid) {
+        Dev->ResumePending = TRUE;
+    }
     NTSTATUS Status = TegraI2c5Acquire(Dev->SdGate);
-    if (!NT_SUCCESS(Status)) return Status;
+    if (!NT_SUCCESS(Status)) {
+        if (Dev->ContextValid) {
+            Dev->ResumePending = TRUE;
+        }
+        return Status;
+    }
     Status = TegraI2cRestoreContext(Dev);
     TegraI2c5Release(Dev->SdGate);
     return Status;
@@ -602,9 +627,16 @@ NTSTATUS TegraI2cEvtD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE TargetState)
         return STATUS_SUCCESS;
     }
     NTSTATUS Status = TegraI2c5Acquire(Dev->SdGate);
-    if (!NT_SUCCESS(Status)) return Status;
+    if (!NT_SUCCESS(Status)) {
+        if (Dev->ContextValid) {
+            Dev->ResumePending = TRUE;
+        }
+        return Status;
+    }
     Status = TegraI2cSaveContext(Dev);
-    Dev->ResumePending = NT_SUCCESS(Status);
+    if (Dev->ContextValid) {
+        Dev->ResumePending = TRUE;
+    }
     TegraI2c5Release(Dev->SdGate);
     return Status;
 }

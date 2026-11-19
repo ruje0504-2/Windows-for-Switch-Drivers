@@ -40,6 +40,15 @@ typedef struct _SWRTC_DEVICE {
     PCALLBACK_OBJECT TimeCallbackObject;
     PVOID TimeCallback;
     LONG Learns;
+    LONG Suspended;
+    LONG SuppressTimeCallback;
+    LONG PendingLearn;
+    BOOLEAN SuspendSnapshotValid;
+    BOOLEAN SuspendRtcValid;
+    BOOLEAN SuspendSystemSleep;
+    LARGE_INTEGER SuspendRtc;
+    LARGE_INTEGER SuspendSystemTime;
+    ULONGLONG SuspendUnbiased;
     SW_DISPLAY_IDLE DisplayIdle;
 } SWRTC_DEVICE, *PSWRTC_DEVICE;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SWRTC_DEVICE, SwRtcGetDevice)
@@ -230,49 +239,73 @@ static NTSTATUS SwRtcReadTime(PSWRTC_DEVICE Dev, PLARGE_INTEGER Time)
 
 /* ------------------------------------------------------- offset handling */
 
+static LONGLONG SwRtcRoundSeconds(LONGLONG Ticks)
+{
+    return (Ticks >= 0) ? ((Ticks + TICKS_PER_SECOND / 2) / TICKS_PER_SECOND)
+                        : ((Ticks - TICKS_PER_SECOND / 2) / TICKS_PER_SECOND);
+}
+
+static BOOLEAN SwRtcIsSystemSleepAction(POWER_ACTION Action)
+{
+    return (BOOLEAN)(Action == PowerActionSleep || Action == PowerActionHibernate);
+}
+
+static VOID SwRtcStoreOffset(PSWRTC_DEVICE Dev, LONGLONG Offset)
+{
+    SwRtcTrace64(L"OffsetSeconds", Offset);
+    SwRtcTrace(L"OffsetFormat", OFFSET_FORMAT);
+    SwRtcTrace(L"Learns", (ULONG)InterlockedIncrement(&Dev->Learns));
+}
+
 /* Learn OffsetSeconds = system time - RTC after the system time was set. */
 VOID SwRtcEvtLearnWork(WDFWORKITEM WorkItem)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(SwRtcGetWork(WorkItem)->Device);
     LARGE_INTEGER Rtc, Now;
-    LONGLONG Offset;
     NTSTATUS Status;
 
+    if (InterlockedCompareExchange(&Dev->Suspended, 0, 0) != 0) {
+        InterlockedExchange(&Dev->PendingLearn, 1);
+        return;
+    }
+    if (Dev->I2c == NULL) {
+        return;
+    }
     Status = SwRtcReadTime(Dev, &Rtc);
     SwRtcTrace(L"LastLearnStatus", (ULONG)Status);
     if (!NT_SUCCESS(Status)) {
         return;
     }
     KeQuerySystemTime(&Now);
-    Offset = (Now.QuadPart - Rtc.QuadPart + TICKS_PER_SECOND / 2) / TICKS_PER_SECOND;
-    SwRtcTrace64(L"OffsetSeconds", Offset);
-    SwRtcTrace(L"OffsetFormat", OFFSET_FORMAT);
-    SwRtcTrace(L"Learns", (ULONG)InterlockedIncrement(&Dev->Learns));
+    SwRtcStoreOffset(Dev, SwRtcRoundSeconds(Now.QuadPart - Rtc.QuadPart));
 }
 
-/* \Callback\SetSystemTime: any IRQL the caller had, so only queue the work. */
+/* \Callback\SetSystemTime: any IRQL the caller had, so queue work while active
+ * or record a pending learn while suspended in D3. */
 VOID SwRtcTimeChanged(PVOID Context, PVOID Argument1, PVOID Argument2)
 {
     PSWRTC_DEVICE Dev = (PSWRTC_DEVICE)Context;
     UNREFERENCED_PARAMETER(Argument1);
     UNREFERENCED_PARAMETER(Argument2);
+    if (InterlockedCompareExchange(&Dev->SuppressTimeCallback, 0, 0) != 0) {
+        return;
+    }
+    if (InterlockedCompareExchange(&Dev->Suspended, 0, 0) != 0) {
+        InterlockedExchange(&Dev->PendingLearn, 1);
+        return;
+    }
     if (Dev->LearnWork != NULL) {
         WdfWorkItemEnqueue(Dev->LearnWork);
     }
 }
 
-/* At start: system time = RTC + OffsetSeconds, when an offset was learned. */
-static VOID SwRtcRestoreTime(PSWRTC_DEVICE Dev)
+/* Apply system time = Rtc + OffsetSeconds when an offset was learned. */
+static VOID SwRtcApplyRtcTime(PSWRTC_DEVICE Dev, LARGE_INTEGER Rtc)
 {
-    LARGE_INTEGER Rtc, Now, NewTime;
+    LARGE_INTEGER Now, NewTime;
     LONGLONG Offset, Diff;
     NTSTATUS Status;
 
-    Status = SwRtcReadTime(Dev, &Rtc);
-    SwRtcTrace(L"FirstReadStatus", (ULONG)Status);
-    if (!NT_SUCCESS(Status)) {
-        return;
-    }
     if (!SwRtcReadOffset(&Offset)) {
         SwRtcTrace(L"RestoreResult", 1);    /* no offset yet: wait for the first time sync */
         return;
@@ -285,8 +318,24 @@ static VOID SwRtcRestoreTime(PSWRTC_DEVICE Dev)
         SwRtcTrace(L"RestoreResult", 2);    /* already right */
         return;
     }
+    InterlockedExchange(&Dev->SuppressTimeCallback, 1);
     Status = ZwSetSystemTime(&NewTime, NULL);
+    InterlockedExchange(&Dev->SuppressTimeCallback, 0);
     SwRtcTrace(L"RestoreResult", NT_SUCCESS(Status) ? 3 : (ULONG)Status);
+}
+
+/* At start: system time = RTC + OffsetSeconds, when an offset was learned. */
+static VOID SwRtcRestoreTime(PSWRTC_DEVICE Dev)
+{
+    LARGE_INTEGER Rtc;
+    NTSTATUS Status;
+
+    Status = SwRtcReadTime(Dev, &Rtc);
+    SwRtcTrace(L"FirstReadStatus", (ULONG)Status);
+    if (!NT_SUCCESS(Status)) {
+        return;
+    }
+    SwRtcApplyRtcTime(Dev, Rtc);
 }
 
 /* ------------------------------------------------------------------- PnP */
@@ -333,6 +382,18 @@ static VOID SwRtcRegisterCallback(PSWRTC_DEVICE Dev)
     SwRtcTrace(L"CallbackRegistered", Dev->TimeCallback != NULL);
 }
 
+static VOID SwRtcUnregisterCallback(PSWRTC_DEVICE Dev)
+{
+    if (Dev->TimeCallback != NULL) {
+        ExUnregisterCallback(Dev->TimeCallback);
+        Dev->TimeCallback = NULL;
+    }
+    if (Dev->TimeCallbackObject != NULL) {
+        ObDereferenceObject(Dev->TimeCallbackObject);
+        Dev->TimeCallbackObject = NULL;
+    }
+}
+
 NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
@@ -345,6 +406,12 @@ NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
             return Status;
         }
     }
+    InterlockedExchange(&Dev->Suspended, 0);
+    InterlockedExchange(&Dev->SuppressTimeCallback, 0);
+    InterlockedExchange(&Dev->PendingLearn, 0);
+    Dev->SuspendSnapshotValid = FALSE;
+    Dev->SuspendRtcValid = FALSE;
+    Dev->SuspendSystemSleep = FALSE;
     SwRtcRestoreTime(Dev);
     SwRtcRegisterCallback(Dev);
     Status = SwDisplayIdleStart(&Dev->DisplayIdle);
@@ -355,26 +422,93 @@ NTSTATUS SwRtcEvtSelfManagedIoInit(WDFDEVICE Device)
 NTSTATUS SwRtcEvtSuspend(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
-    if (Dev->TimeCallback != NULL) {
-        ExUnregisterCallback(Dev->TimeCallback);
-        Dev->TimeCallback = NULL;
-    }
-    if (Dev->TimeCallbackObject != NULL) {
-        ObDereferenceObject(Dev->TimeCallbackObject);
-        Dev->TimeCallbackObject = NULL;
-    }
+
     if (Dev->LearnWork != NULL) {
         WdfWorkItemFlush(Dev->LearnWork);
     }
+    InterlockedExchange(&Dev->Suspended, 1);
+    if (Dev->LearnWork != NULL) {
+        WdfWorkItemFlush(Dev->LearnWork);
+    }
+    Dev->SuspendSystemSleep = SwRtcIsSystemSleepAction(WdfDeviceGetSystemPowerAction(Device));
+    Dev->SuspendRtcValid = (BOOLEAN)(Dev->I2c != NULL && NT_SUCCESS(SwRtcReadTime(Dev, &Dev->SuspendRtc)));
+    Dev->SuspendUnbiased = KeQueryUnbiasedInterruptTime();
+    KeQuerySystemTime(&Dev->SuspendSystemTime);
+    Dev->SuspendSnapshotValid = TRUE;
     return STATUS_SUCCESS;
 }
 
 NTSTATUS SwRtcEvtRestart(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
-    /* Resynchronize system wall-clock across SC7 while SetSystemTime callback is still detached. */
-    SwRtcRestoreTime(Dev);
+    LARGE_INTEGER Rtc, NowSys;
+    ULONGLONG NowUnbiased;
+    BOOLEAN TimeChangedWhileSuspended;
+    BOOLEAN SystemSleep;
+    BOOLEAN ConfirmedResume = FALSE;
+    LONGLONG DeltaUnbiasedTicks = 0;
+    LONGLONG SleepGapTicks = 0;
+    LONGLONG WallShiftTicks = 0;
+    NTSTATUS Status;
+
     SwRtcRegisterCallback(Dev);
+    TimeChangedWhileSuspended = (BOOLEAN)(InterlockedExchange(&Dev->PendingLearn, 0) != 0);
+    SystemSleep = (BOOLEAN)(Dev->SuspendSystemSleep ||
+                            SwRtcIsSystemSleepAction(WdfDeviceGetSystemPowerAction(Device)));
+
+    if (Dev->I2c != NULL) {
+        Status = SwRtcReadTime(Dev, &Rtc);
+        SwRtcTrace(L"FirstReadStatus", (ULONG)Status);
+        if (NT_SUCCESS(Status)) {
+            NowUnbiased = KeQueryUnbiasedInterruptTime();
+            KeQuerySystemTime(&NowSys);
+
+            if (Dev->SuspendSnapshotValid && NowUnbiased >= Dev->SuspendUnbiased &&
+                (NowUnbiased - Dev->SuspendUnbiased) <= 0x7FFFFFFFFFFFFFFFULL) {
+                DeltaUnbiasedTicks = (LONGLONG)(NowUnbiased - Dev->SuspendUnbiased);
+                WallShiftTicks = (NowSys.QuadPart - Dev->SuspendSystemTime.QuadPart) - DeltaUnbiasedTicks;
+                if (Dev->SuspendRtcValid && Rtc.QuadPart >= Dev->SuspendRtc.QuadPart) {
+                    SleepGapTicks = (Rtc.QuadPart - Dev->SuspendRtc.QuadPart) - DeltaUnbiasedTicks;
+                } else if (!TimeChangedWhileSuspended) {
+                    LONGLONG Offset = 0;
+                    if (SwRtcReadOffset(&Offset)) {
+                        SleepGapTicks = (Rtc.QuadPart + Offset * TICKS_PER_SECOND -
+                                         Dev->SuspendSystemTime.QuadPart) - DeltaUnbiasedTicks;
+                    }
+                }
+            }
+
+            if (SystemSleep || SleepGapTicks > 2 * TICKS_PER_SECOND) {
+                ConfirmedResume = TRUE;
+            }
+
+            if (ConfirmedResume) {
+                if (!SystemSleep && TimeChangedWhileSuspended &&
+                    Dev->SuspendSnapshotValid && Dev->SuspendRtcValid &&
+                    NowUnbiased >= Dev->SuspendUnbiased &&
+                    (NowUnbiased - Dev->SuspendUnbiased) <= 0x7FFFFFFFFFFFFFFFULL) {
+                    LONGLONG PreSleepRtcTicks = Dev->SuspendRtc.QuadPart + DeltaUnbiasedTicks;
+                    SwRtcStoreOffset(Dev, SwRtcRoundSeconds(NowSys.QuadPart - PreSleepRtcTicks));
+                }
+                SwRtcApplyRtcTime(Dev, Rtc);
+            } else {
+                if (TimeChangedWhileSuspended ||
+                    WallShiftTicks > 2 * TICKS_PER_SECOND ||
+                    WallShiftTicks < -2 * TICKS_PER_SECOND) {
+                    SwRtcStoreOffset(Dev, SwRtcRoundSeconds(NowSys.QuadPart - Rtc.QuadPart));
+                }
+                SwRtcTrace(L"RestoreResult", 4);
+            }
+        }
+    }
+
+    Dev->SuspendSnapshotValid = FALSE;
+    Dev->SuspendRtcValid = FALSE;
+    Dev->SuspendSystemSleep = FALSE;
+    InterlockedExchange(&Dev->Suspended, 0);
+    if (InterlockedExchange(&Dev->PendingLearn, 0) != 0 && Dev->LearnWork != NULL) {
+        WdfWorkItemEnqueue(Dev->LearnWork);
+    }
     return STATUS_SUCCESS;
 }
 
@@ -382,7 +516,11 @@ VOID SwRtcEvtSelfManagedIoCleanup(WDFDEVICE Device)
 {
     PSWRTC_DEVICE Dev = SwRtcGetDevice(Device);
     SwDisplayIdleStop(&Dev->DisplayIdle);
-    (VOID)SwRtcEvtSuspend(Device);
+    InterlockedExchange(&Dev->Suspended, 1);
+    SwRtcUnregisterCallback(Dev);
+    if (Dev->LearnWork != NULL) {
+        WdfWorkItemFlush(Dev->LearnWork);
+    }
     if (Dev->I2c != NULL) {
         WdfIoTargetClose(Dev->I2c);
         WdfObjectDelete(Dev->I2c);

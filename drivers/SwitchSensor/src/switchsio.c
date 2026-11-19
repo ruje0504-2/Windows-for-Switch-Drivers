@@ -81,6 +81,9 @@ static EVT_WDF_DEVICE_D0_ENTRY EnterD0;
 static EVT_WDF_DEVICE_D0_ENTRY_POST_INTERRUPTS_ENABLED Start;
 static EVT_WDF_DEVICE_D0_EXIT_PRE_INTERRUPTS_DISABLED Stop;
 static EVT_WDF_DEVICE_D0_EXIT ExitD0;
+static EVT_WDF_DEVICE_SELF_MANAGED_IO_INIT InitIo;
+static EVT_WDF_DEVICE_SELF_MANAGED_IO_RESTART RestartIo;
+static EVT_WDF_DEVICE_SELF_MANAGED_IO_CLEANUP CleanupIo;
 static EVT_WDF_INTERRUPT_ISR Receive;
 static EVT_WDF_INTERRUPT_ENABLE Enable;
 static EVT_WDF_INTERRUPT_DISABLE Disable;
@@ -402,7 +405,6 @@ static NTSTATUS Start(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Previous)
     SIO_DEVICE *D = SioDevice(Device);
     KIRQL Irql;
     UNREFERENCED_PARAMETER(Previous);
-    (VOID)SwDisplayIdleStart(&D->DisplayIdle);
     KeAcquireSpinLock(&D->TimerLock, &Irql);
     D->Running = TRUE;
     WdfTimerStart(D->Timer, WDF_REL_TIMEOUT_IN_MS(1));
@@ -429,6 +431,23 @@ static NTSTATUS ExitD0(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Target)
     UNREFERENCED_PARAMETER(Target);
     D->Powered = FALSE;
     return BoardPower(Device, 0);
+}
+
+static NTSTATUS InitIo(WDFDEVICE Device)
+{
+    (VOID)SwDisplayIdleStart(&SioDevice(Device)->DisplayIdle);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS RestartIo(WDFDEVICE Device)
+{
+    (VOID)SwDisplayIdleStart(&SioDevice(Device)->DisplayIdle);
+    return STATUS_SUCCESS;
+}
+
+static VOID CleanupIo(WDFDEVICE Device)
+{
+    SwDisplayIdleStop(&SioDevice(Device)->DisplayIdle);
 }
 
 static NTSTATUS Release(WDFDEVICE Device, WDFCMRESLIST Translated)
@@ -497,6 +516,9 @@ static NTSTATUS Add(WDFDRIVER Driver, PWDFDEVICE_INIT Init)
     Pnp.EvtDeviceD0EntryPostInterruptsEnabled = Start;
     Pnp.EvtDeviceD0ExitPreInterruptsDisabled = Stop;
     Pnp.EvtDeviceD0Exit = ExitD0;
+    Pnp.EvtDeviceSelfManagedIoInit = InitIo;
+    Pnp.EvtDeviceSelfManagedIoRestart = RestartIo;
+    Pnp.EvtDeviceSelfManagedIoCleanup = CleanupIo;
     WdfDeviceInitSetPnpPowerEventCallbacks(Init, &Pnp);
     NTSTATUS Status = WdfDeviceInitAssignName(Init, &Name);
     if (!NT_SUCCESS(Status)) return Status;

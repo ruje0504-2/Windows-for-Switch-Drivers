@@ -90,7 +90,7 @@ static UCHAR car_mmio[0x1000];
 static UCHAR i2c_mmio[I2C_MMIO_SIZE];
 static PTEGRA_I2C_DEVICE active_dev;
 static bool fail_enable, fail_reset_clear, fail_source, fail_cfg_load, fail_fifo_flush;
-static unsigned host_reads, host_writes;
+static unsigned car_writes, host_reads, host_writes;
 
 static ULONG raw_get(const UCHAR *b, ULONG o) {
     ULONG v;
@@ -123,6 +123,7 @@ static ULONG mock_read(PULONG p) {
 static void mock_write(PULONG p, ULONG v) {
     UCHAR *b = (UCHAR *)p;
     if (b >= car_mmio && b < car_mmio + sizeof(car_mmio)) {
+        car_writes++;
         ULONG off = (ULONG)(b - car_mmio);
         const TEGRA_I2C_CLOCK *c = active_dev->Clock;
         if (off == c->ResetSet) {
@@ -175,6 +176,7 @@ funcs = "".join(function(n) for n in [
     "TegraI2cWaitClear",
     "TegraI2cReadClock",
     "TegraI2cWriteClock",
+    "TegraI2cClockReady",
     "TegraI2cSaveContext",
     "TegraI2cRestoreContext",
     "TegraI2cLoadConfig",
@@ -194,7 +196,7 @@ static void setup_bus(PTEGRA_I2C_DEVICE d, unsigned idx) {
     active_dev = d;
     fail_enable = fail_reset_clear = fail_source = fail_cfg_load = fail_fifo_flush = false;
     gate_held = false; gate_acquires = 0; gate_status = STATUS_SUCCESS;
-    host_reads = host_writes = 0;
+    car_writes = host_reads = host_writes = 0;
 
     d->Base = i2c_mmio;
     d->Length = sizeof(i2c_mmio);
@@ -292,18 +294,112 @@ int main(void) {
         } else {
             assert(st == STATUS_IO_TIMEOUT);
         }
-        assert(d.ResumePending);
+        assert(d.ContextValid && d.ResumePending && !gate_held);
+
+        /* Clearing the fault and retrying D0Entry must succeed cleanly. */
+        fail_enable = fail_reset_clear = fail_source = fail_cfg_load = fail_fifo_flush = false;
+        assert(TegraI2cEvtD0Entry(&d, 3) == STATUS_SUCCESS && !d.ResumePending && !gate_held);
+        assert(raw_get(car_mmio, d.Clock->Source) == d.SavedSource);
+        assert(raw_get(i2c_mmio, I2C_CNFG) == (CNFG_PACKET_MODE | 0x2u));
+        assert(raw_get(i2c_mmio, I2C_CLK_DIVISOR) == 0x00190001u);
     }
 
+    /* 4. Initial boot D0Entry(D3Final): no redundant CAR reset when clocked, retry resets CAR on failure. */
+    setup_bus(&d, 4);
+    assert(TegraI2cSaveContext(&d) == STATUS_SUCCESS && d.ContextValid && !d.ResumePending);
+    car_writes = 0;
+    assert(TegraI2cEvtD0Entry(&d, WdfPowerDeviceD3Final) == STATUS_SUCCESS);
+    assert(car_writes == 0 && !d.ResumePending && !gate_held);
+    assert(raw_get(i2c_mmio, I2C_CNFG) == (CNFG_PACKET_MODE | 0x2u));
+
+    fail_cfg_load = true;
+    assert(TegraI2cEvtD0Entry(&d, WdfPowerDeviceD3Final) == STATUS_IO_TIMEOUT);
+    assert(d.ContextValid && d.ResumePending && !gate_held);
+    fail_cfg_load = false;
+    car_writes = 0;
+    assert(TegraI2cEvtD0Entry(&d, WdfPowerDeviceD3Final) == STATUS_SUCCESS);
+    assert(car_writes > 0 && !d.ResumePending && !gate_held);
+
+    /* Even with ResumePending == FALSE, gated/reset CAR on D0Entry(D3Final) triggers CAR recovery. */
+    raw_put(car_mmio, d.Clock->Enable, 0);
+    raw_put(car_mmio, d.Clock->Reset, d.Clock->Mask);
+    car_writes = 0;
+    assert(TegraI2cEvtD0Entry(&d, WdfPowerDeviceD3Final) == STATUS_SUCCESS);
+    assert(car_writes > 0 && !d.ResumePending && !gate_held);
+
+    /* 5. I2C5 SdGate failure on D0Entry preserves state without touching hardware, then retry succeeds. */
+    setup_bus(&d, 4);
+    assert(TegraI2cEvtD0Exit(&d, 3) == STATUS_SUCCESS);
+    memset(i2c_mmio, 0, sizeof(i2c_mmio));
+    raw_put(car_mmio, d.Clock->Enable, 0);
+    raw_put(car_mmio, d.Clock->Reset, d.Clock->Mask);
+    raw_put(car_mmio, d.Clock->Source, 0);
+    gate_status = STATUS_IO_TIMEOUT;
+    car_writes = host_reads = host_writes = 0;
+    assert(TegraI2cEvtD0Entry(&d, 3) == STATUS_IO_TIMEOUT);
+    assert(d.ContextValid && d.ResumePending && !gate_held);
+    assert(car_writes == 0 && host_reads == 0 && host_writes == 0);
+    gate_status = STATUS_SUCCESS;
+    assert(TegraI2cEvtD0Entry(&d, 3) == STATUS_SUCCESS && !d.ResumePending && !gate_held);
+    assert(raw_get(car_mmio, d.Clock->Source) == d.SavedSource);
+    assert(raw_get(i2c_mmio, I2C_CNFG) == (CNFG_PACKET_MODE | 0x2u));
+
+    /* 6. Preserve last known-good context across busy, clock-disabled, in-reset, and SdGate-failed D0Exit. */
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        setup_bus(&d, 4); /* I2C5 */
+        assert(TegraI2cSaveContext(&d) == STATUS_SUCCESS && d.ContextValid && !d.ResumePending);
+        ULONG orig_src = d.SavedSource, orig_div = d.Saved[1];
+        car_writes = host_reads = host_writes = 0;
+        if (mode == 0) {
+            raw_put(i2c_mmio, I2C_STATUS, 0x100u);
+            assert(TegraI2cEvtD0Exit(&d, 3) == STATUS_DEVICE_BUSY);
+        } else if (mode == 1) {
+            raw_put(car_mmio, d.Clock->Enable, 0);
+            assert(TegraI2cEvtD0Exit(&d, 3) == STATUS_DEVICE_NOT_READY);
+            assert(host_reads == 0 && host_writes == 0);
+        } else if (mode == 2) {
+            raw_put(car_mmio, d.Clock->Reset, d.Clock->Mask);
+            assert(TegraI2cEvtD0Exit(&d, 3) == STATUS_DEVICE_NOT_READY);
+            assert(host_reads == 0 && host_writes == 0);
+        } else {
+            gate_status = STATUS_IO_TIMEOUT;
+            assert(TegraI2cEvtD0Exit(&d, 3) == STATUS_IO_TIMEOUT);
+            assert(car_writes == 0 && host_reads == 0 && host_writes == 0);
+        }
+        assert(d.ContextValid && d.ResumePending && !gate_held);
+        assert(d.SavedSource == orig_src && d.Saved[1] == orig_div);
+
+        gate_status = STATUS_SUCCESS;
+        memset(i2c_mmio, 0, sizeof(i2c_mmio));
+        raw_put(car_mmio, d.Clock->Enable, 0);
+        raw_put(car_mmio, d.Clock->Reset, d.Clock->Mask);
+        raw_put(car_mmio, d.Clock->Source, 0);
+        assert(TegraI2cEvtD0Entry(&d, 3) == STATUS_SUCCESS && !d.ResumePending && !gate_held);
+        assert(raw_get(car_mmio, d.Clock->Source) == orig_src);
+        assert(raw_get(i2c_mmio, I2C_CLK_DIVISOR) == orig_div);
+        assert(raw_get(i2c_mmio, I2C_CNFG) == (CNFG_PACKET_MODE | 0x2u));
+    }
+
+    /* 7. TegraI2cTransfer detects mismatched clock source even when clocked and !ResumePending. */
+    setup_bus(&d, 4);
+    assert(TegraI2cSaveContext(&d) == STATUS_SUCCESS && !d.ResumePending);
+    raw_put(car_mmio, d.Clock->Source, 0);
+    assert(TegraI2cTransfer(&d, 0x33, FALSE, payload, sizeof(payload), FALSE) == STATUS_SUCCESS);
+    assert(raw_get(car_mmio, d.Clock->Source) == d.SavedSource && !d.ResumePending);
+
+    /* 8. Busy bus with no prior baseline leaves ContextValid/ResumePending FALSE; D3Final invalidates context. */
     setup_bus(&d, 0);
-    raw_put(i2c_mmio, I2C_STATUS, 0x100u); /* bus busy */
+    raw_put(i2c_mmio, I2C_STATUS, 0x100u); /* bus busy with no prior saved context */
     assert(TegraI2cEvtD0Exit(&d, 3) == STATUS_DEVICE_BUSY && !d.ContextValid && !d.ResumePending);
 
     setup_bus(&d, 0);
     assert(TegraI2cEvtD0Exit(&d, 3) == STATUS_SUCCESS && d.ContextValid);
     assert(TegraI2cEvtD0Exit(&d, WdfPowerDeviceD3Final) == STATUS_SUCCESS && !d.ContextValid && !d.ResumePending);
+    car_writes = host_reads = host_writes = 0;
+    assert(TegraI2cEvtD0Entry(&d, 3) == STATUS_DEVICE_NOT_READY && !d.ContextValid && !d.ResumePending && !gate_held);
+    assert(car_writes == 0 && host_reads == 0 && host_writes == 0);
 
-    puts("PASS: Tegra210I2c 6-bus SC7 CAR/packet restore, neighbor clock isolation, CAR-first transfer guard and fault bounds");
+    puts("PASS: Tegra210I2c 6-bus D0/power-loss CAR/packet restore, last known-good preservation, retry and ownership bounds");
     return 0;
 }
 '''

@@ -213,6 +213,57 @@ static NTSTATUS SwFanDvfsUpdateLocked(PSWFAN_DEVICE Dev, ULONG Temp, BOOLEAN Val
 #endif
 #include "t214/clock.h"
 #ifdef SWITCH_LITE_GPU
+#define SWFAN_HAVE_TEMP_REFRESH 1
+static NTSTATUS SwFanRefreshTemp(PSWFAN_DEVICE Dev, PULONG TempOut)
+{
+    UCHAR Local = 0, Remote = 0;
+    BOOLEAN NeedReinit = FALSE;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (Dev->Sensor == NULL) {
+        return STATUS_DEVICE_NOT_READY;
+    }
+    WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+    if (Dev->Stopping) {
+        WdfWaitLockRelease(Dev->BacklightLock);
+        return STATUS_DEVICE_NOT_READY;
+    }
+    NeedReinit = Dev->IsLite && (Dev->SensorNeedsReinit || Dev->ScreenOffIdle);
+    if (NeedReinit) Dev->SensorNeedsReinit = FALSE;
+    WdfWaitLockRelease(Dev->BacklightLock);
+
+    if (NeedReinit) {
+        Status = SwFanConfigureSensor(Dev->Sensor);
+        if (!NT_SUCCESS(Status)) {
+            WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+            Dev->SensorNeedsReinit = TRUE;
+            WdfWaitLockRelease(Dev->BacklightLock);
+        }
+    }
+    if (NT_SUCCESS(Status)) {
+        Status = SwFanReadReg(Dev->Sensor, TMP451_REMOTE, &Remote);
+    }
+    if (NT_SUCCESS(Status)) {
+        Status = SwFanReadReg(Dev->Sensor, TMP451_LOCAL, &Local);
+    }
+    if (NT_SUCCESS(Status)) {
+        ULONG Temp = (Remote > Local) ? Remote : Local;
+        SwFanCpuLock(Dev);
+        Dev->LastTemp = Temp;
+        Dev->TempValid = TRUE;
+        Dev->SocTempC = Remote;
+        Dev->BoardTempC = Local;
+        Dev->TempSampleTime = KeQueryInterruptTime();
+        SwFanCpuUnlock(Dev);
+        *TempOut = Temp;
+        return STATUS_SUCCESS;
+    }
+    SwFanCpuLock(Dev);
+    Dev->TempValid = FALSE;
+    Dev->TempSampleTime = 0;
+    SwFanCpuUnlock(Dev);
+    return Status;
+}
 #include "t214/dfll_windows.h"
 #include "t214/gpu_pmic.h"
 #endif
@@ -245,15 +296,20 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
 {
     PSWFAN_DEVICE Dev = SwFanGetDevice(SwFanGetTimer(Timer)->Device);
     UCHAR Local = 0, Remote = 0;
-    NTSTATUS Status, ClockStatus = STATUS_SUCCESS;
-    BOOLEAN ScreenOff, ClockRestored;
+    NTSTATUS Status = STATUS_SUCCESS, ClockStatus = STATUS_SUCCESS;
+    BOOLEAN ScreenOff, ClockRestored, NeedReinit, SampleValid = FALSE, ScreenOffIdle;
     ULONG DisplayState, BacklightDuty;
 
-    if (Dev->Stopping) return;
     WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+    if (Dev->Stopping) {
+        WdfWaitLockRelease(Dev->BacklightLock);
+        return;
+    }
     ScreenOff = Dev->IsLite && Dev->BacklightReady && Dev->DisplayState == 0;
     DisplayState = Dev->DisplayState;
     BacklightDuty = SwBacklightDuty(Dev->Brightness, DisplayState);
+    NeedReinit = Dev->SensorNeedsReinit && Dev->IsLite;
+    if (NeedReinit) Dev->SensorNeedsReinit = FALSE;
     WdfWaitLockRelease(Dev->BacklightLock);
     SwFanTrace(L"DisplayState", DisplayState);
     SwFanTrace(L"BacklightDuty", BacklightDuty);
@@ -268,13 +324,22 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
     SwFanCpuLock(Dev);
     ClockRestored = Dev->CpuConfigured && !Dev->CpuApplied &&
                     NT_SUCCESS(ClockStatus) && SwCpuKhz(Dev) == Dev->BootCpuKhz;
+#ifdef SWITCH_LITE_GPU
+    if (Dev->Dfll.Control.active) ClockRestored = FALSE;
+#endif
     SwFanCpuUnlock(Dev);
     SwFanTrace(L"ScreenOffCooling", ScreenOff);
-    if (Dev->SensorNeedsReinit && Dev->IsLite) {
-        (VOID)SwFanConfigureSensor(Dev->Sensor);
-        Dev->SensorNeedsReinit = FALSE;
+    if (NeedReinit) {
+        Status = SwFanConfigureSensor(Dev->Sensor);
+        if (!NT_SUCCESS(Status)) {
+            WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+            Dev->SensorNeedsReinit = TRUE;
+            WdfWaitLockRelease(Dev->BacklightLock);
+        }
     }
-    Status = SwFanReadReg(Dev->Sensor, TMP451_REMOTE, &Remote);
+    if (NT_SUCCESS(Status)) {
+        Status = SwFanReadReg(Dev->Sensor, TMP451_REMOTE, &Remote);
+    }
     if (NT_SUCCESS(Status)) {
         Status = SwFanReadReg(Dev->Sensor, TMP451_LOCAL, &Local);
     }
@@ -289,6 +354,7 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
         Dev->TempSampleTime = KeQueryInterruptTime();
 #endif
         SwFanCpuUnlock(Dev);
+        SampleValid = TRUE;
         Dev->Failures = 0;
         ULONG Duty = SwFanDutyForTemp(Temp, Dev->Duty);
         // Retain the overclock floor until stock CPU clock is confirmed. On
@@ -302,6 +368,9 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
     } else {
         SwFanCpuLock(Dev);
         Dev->TempValid = FALSE;
+#ifdef SWITCH_LITE_GPU
+        Dev->TempSampleTime = 0;
+#endif
         SwFanCpuUnlock(Dev);
         SwFanTrace(L"LastSensorError", (ULONG)Status);
         /* A stopped fan needs cooling on the first lost temperature sample. */
@@ -318,17 +387,23 @@ VOID SwFanEvtTimer(WDFTIMER Timer)
     SwFanTrace(L"Runs", (ULONG)InterlockedIncrement(&Dev->Runs));
     WdfWaitLockAcquire(Dev->BacklightLock, NULL);
     if (!Dev->Stopping) {
-        if (Dev->IsLite && Dev->BacklightReady && Dev->DisplayState == 0 &&
+        if (ScreenOff && Dev->IsLite && Dev->BacklightReady && Dev->DisplayState == 0 &&
+            !Dev->SensorNeedsReinit &&
             (Dev->Config.CpuKhz != LITE_CPU_KHZ || ClockRestored) &&
-            Dev->TempValid && Dev->Duty == 0 && !Dev->GpuRailOn) {
+            SampleValid && Dev->Duty == 0 && !Dev->GpuRailOn) {
             Dev->ScreenOffIdle = TRUE;
         } else {
+            ULONG DelayMs = (ScreenOff && Dev->DisplayState != 0) ? 50 : POLL_MS;
             Dev->ScreenOffIdle = FALSE;
-            WdfTimerStart(Timer, WDF_REL_TIMEOUT_IN_MS(POLL_MS));    /* one-shot passive timer, re-armed */
+            if (DelayMs == 50 && Dev->IsLite && Dev->Pwm != NULL && Dev->Duty == 0) {
+                SwFanSetDuty(Dev, 76);
+            }
+            WdfTimerStart(Timer, WDF_REL_TIMEOUT_IN_MS(DelayMs));    /* one-shot passive timer, re-armed */
         }
     }
+    ScreenOffIdle = Dev->ScreenOffIdle;
     WdfWaitLockRelease(Dev->BacklightLock);
-    SwFanTrace(L"ScreenOffIdle", Dev->ScreenOffIdle);
+    SwFanTrace(L"ScreenOffIdle", ScreenOffIdle);
 }
 
 /* ------------------------------------------------------------- backlight */
@@ -367,13 +442,15 @@ NTSTATUS SwFanDisplayStateCallback(LPCGUID Setting, PVOID Value, ULONG Length, P
 {
     PSWFAN_DEVICE Dev = (PSWFAN_DEVICE)Context;
     if (Length >= sizeof(ULONG) && IsEqualGUID(Setting, &SwFanDisplayStateGuid)) {
+        ULONG PrevState;
         WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+        PrevState = Dev->DisplayState;
         Dev->DisplayState = *(PULONG)Value;
         /* Power notification must not wait for registry/storage I/O. The
            existing temperature timer records this snapshot after the lock. */
-        (VOID)SwFanApplyBacklight(Dev);
+        if (Dev->BacklightReady) (VOID)SwFanApplyBacklight(Dev);
         if (Dev->DisplayState != 0) {
-            Dev->SensorNeedsReinit = TRUE;
+            if (PrevState == 0 || Dev->ScreenOffIdle) Dev->SensorNeedsReinit = TRUE;
             if (Dev->ScreenOffIdle && !Dev->Stopping && Dev->Timer != NULL) {
                 Dev->ScreenOffIdle = FALSE;
                 if (Dev->IsLite && Dev->Pwm != NULL && Dev->Duty == 0) {
@@ -429,15 +506,17 @@ VOID SwFanEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutLengt
             if (In->Version != SWFAN_POWER_STATUS_VERSION || In->BusyPermille > 1000u)
                 Status = STATUS_INVALID_PARAMETER;
             else {
-                BOOLEAN ScreenOff;
+                BOOLEAN ScreenOff, Stopping, NeedReinit;
                 SwFanCpuLock(Dev);
                 Dev->Dfll.LoadPermille = In->BusyPermille;
                 Dev->Dfll.LoadTime = KeQueryInterruptTime();
                 WdfWaitLockAcquire(Dev->BacklightLock, NULL);
                 ScreenOff = Dev->BacklightReady && Dev->DisplayState == 0;
+                Stopping = Dev->Stopping;
+                NeedReinit = Dev->SensorNeedsReinit;
                 WdfWaitLockRelease(Dev->BacklightLock);
-                if (!Dev->Stopping && !ScreenOff && Dev->PowerMode < SwNvpCount)
-                    Status = SwFanDvfsUpdateLocked(Dev, Dev->LastTemp, Dev->TempValid);
+                if (!Stopping && !ScreenOff && Dev->PowerMode < SwNvpCount)
+                    Status = SwFanDvfsUpdateLocked(Dev, Dev->LastTemp, Dev->TempValid && !NeedReinit);
                 else Status = STATUS_SUCCESS;
                 SwFanCpuUnlock(Dev);
             }
@@ -482,7 +561,12 @@ NTSTATUS SwFanEvtD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState)
 {
     PSWFAN_DEVICE Dev = SwFanGetDevice(Device);
     UNREFERENCED_PARAMETER(PreviousState);
+    SwFanCpuLock(Dev);
     Dev->TempValid = FALSE;
+#ifdef SWITCH_LITE_GPU
+    Dev->TempSampleTime = 0;
+#endif
+    SwFanCpuUnlock(Dev);
     /* Cooling resumes before the passive timer can restore CPU overclock. */
     if (Dev->IsLite && Dev->Pwm != NULL) SwFanSetDuty(Dev, 76);
     SwFanTrace(L"SleepFanOff", 0);
@@ -494,13 +578,22 @@ NTSTATUS SwFanEvtD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE TargetState)
     PSWFAN_DEVICE Dev = SwFanGetDevice(Device);
     POWER_ACTION Action = WdfDeviceGetSystemPowerAction(Device);
     BOOLEAN Sleeping = Action == PowerActionSleep || Action == PowerActionHibernate;
-    BOOLEAN Stock = Dev->Config.CpuKhz != LITE_CPU_KHZ ||
-                    (Dev->CpuConfigured && !Dev->CpuApplied && SwCpuKhz(Dev) == Dev->BootCpuKhz);
+    BOOLEAN Stock, TempValid;
+    ULONG LastTemp;
+    SwFanCpuLock(Dev);
+    Stock = Dev->Config.CpuKhz != LITE_CPU_KHZ ||
+            (Dev->CpuConfigured && !Dev->CpuApplied && SwCpuKhz(Dev) == Dev->BootCpuKhz);
+#ifdef SWITCH_LITE_GPU
+    if (Dev->Dfll.Control.active) Stock = FALSE;
+#endif
+    TempValid = Dev->TempValid;
+    LastTemp = Dev->LastTemp;
+    SwFanCpuUnlock(Dev);
     /* SelfManagedIoSuspend has drained the timer and released CPU overclock.
        Device removal, shutdown and S0 device idle keep the existing cooling.
        Only a cool system sleep transition can stop polling with the fan off. */
     if (Dev->IsLite && Dev->Pwm != NULL && TargetState != WdfPowerDeviceD3Final && Sleeping && Stock &&
-        Dev->TempValid && Dev->LastTemp <= 39) {
+        TempValid && LastTemp <= 39) {
         SwFanSetDuty(Dev, 0);
         SwFanTrace(L"SleepFanOff", 1);
     }
@@ -607,16 +700,17 @@ NTSTATUS SwFanEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIS
 NTSTATUS SwFanEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Translated)
 {
     PSWFAN_DEVICE Dev = SwFanGetDevice(Device);
-    NTSTATUS Status = SwFanEvtSuspend(Device);
+    NTSTATUS Status;
     UNREFERENCED_PARAMETER(Translated);
     /* ReleaseHardware cannot veto teardown. Always unregister callbacks and
        unmap resources, even if restoring PLLX failed. Do not reset DFLL or
        lower M4 here; propagate the failed restoration instead. */
-    /* Power notifications run outside the WDF queue: drain them before unmap. */
+    /* Power notifications run outside the WDF queue: drain them before stop/unmap. */
     if (Dev->DisplayCallback != NULL) {
         (VOID)PoUnregisterPowerSettingCallback(Dev->DisplayCallback);
         Dev->DisplayCallback = NULL;
     }
+    Status = SwFanEvtSuspend(Device);
     WdfWaitLockAcquire(Dev->BacklightLock, NULL);
     if (Dev->BacklightReady) {
         Dev->DisplayState = 1;
@@ -666,12 +760,13 @@ static VOID SwFanStartBacklight(WDFDEVICE Device)
     (VOID)SwFanApplyBacklight(Dev);
     WdfWaitLockRelease(Dev->BacklightLock);
     if (Dev->DisplayCallback == NULL) {
+        PVOID Callback = NULL;
         /* Called once right away with the current state, so not under BacklightLock. */
         Status = PoRegisterPowerSettingCallback(WdfDeviceWdmGetDeviceObject(Device), &SwFanDisplayStateGuid,
-                                                SwFanDisplayStateCallback, Dev, &Dev->DisplayCallback);
+                                                SwFanDisplayStateCallback, Dev, &Callback);
         SwFanTrace(L"DisplayCallbackStatus", (ULONG)Status);
-        if (!NT_SUCCESS(Status)) {
-            Dev->DisplayCallback = NULL;
+        if (NT_SUCCESS(Status)) {
+            Dev->DisplayCallback = Callback;
         }
     }
 
@@ -713,7 +808,10 @@ NTSTATUS SwFanEvtSuspend(WDFDEVICE Device)
 {
     PSWFAN_DEVICE Dev = SwFanGetDevice(Device);
     NTSTATUS Status;
+    WdfWaitLockAcquire(Dev->BacklightLock, NULL);
     Dev->Stopping = TRUE;
+    Dev->ScreenOffIdle = FALSE;
+    WdfWaitLockRelease(Dev->BacklightLock);
     if (Dev->Timer != NULL) WdfTimerStop(Dev->Timer, TRUE);
     Status = SwCpuApply(Dev, FALSE);
     if (Dev->Pwm != NULL) SwFanSetDuty(Dev, 76);
@@ -736,27 +834,33 @@ NTSTATUS SwFanEvtRestart(WDFDEVICE Device)
         return Status;
     }
     if (Dev->IsLite) SwCpuPrepare(Device);
+    WdfWaitLockAcquire(Dev->BacklightLock, NULL);
     Dev->Stopping = FALSE;
     Dev->ScreenOffIdle = FALSE;
     Dev->SensorNeedsReinit = FALSE;
     Dev->Failures = 0;
     WdfTimerStart(Dev->Timer, WDF_REL_TIMEOUT_IN_MS(500));
+    WdfWaitLockRelease(Dev->BacklightLock);
     return STATUS_SUCCESS;
 }
 
 VOID SwFanEvtSelfManagedIoCleanup(WDFDEVICE Device)
 {
     PSWFAN_DEVICE Dev = SwFanGetDevice(Device);
-    NTSTATUS Status = SwFanEvtSuspend(Device);
+    NTSTATUS Status;
     /* WDF can destroy this device after a failed power callback. Never leave
-       the Po callback pointing at a device context that is being freed. */
-    SwFanTrace(L"CpuCleanupStatus", (ULONG)Status);
-    if (Dev->Pmic != NULL) { WdfObjectDelete(Dev->Pmic); Dev->Pmic = NULL; }
-    Dev->CpuConfigured = FALSE;
+       the Po callback pointing at a device context that is being freed, and
+       drain it before stopping the timer so a display wake cannot rearm it. */
     if (Dev->DisplayCallback != NULL) {
         (VOID)PoUnregisterPowerSettingCallback(Dev->DisplayCallback);
         Dev->DisplayCallback = NULL;
     }
+    Status = SwFanEvtSuspend(Device);
+    SwFanTrace(L"CpuCleanupStatus", (ULONG)Status);
+    SwFanCpuLock(Dev);
+    Dev->CpuConfigured = FALSE;
+    SwFanCpuUnlock(Dev);
+    if (Dev->Pmic != NULL) { WdfObjectDelete(Dev->Pmic); Dev->Pmic = NULL; }
     if (Dev->BacklightPwm != NULL) {
         WdfWaitLockAcquire(Dev->BacklightLock, NULL);
         Dev->DisplayState = 1;
@@ -800,16 +904,16 @@ NTSTATUS SwFanEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
     if (!NT_SUCCESS(Status)) {
         return Status;
     }
-    Status = WdfWaitLockCreate(WDF_NO_OBJECT_ATTRIBUTES, &SwFanGetDevice(Device)->BacklightLock);
-    if (!NT_SUCCESS(Status)) {
-        return Status;
-    }
-    Status = WdfWaitLockCreate(WDF_NO_OBJECT_ATTRIBUTES, &SwFanGetDevice(Device)->PmicLock);
-    if (!NT_SUCCESS(Status)) {
-        return Status;
-    }
     WDF_OBJECT_ATTRIBUTES_INIT(&Attributes);
     Attributes.ParentObject = Device;
+    Status = WdfWaitLockCreate(&Attributes, &SwFanGetDevice(Device)->BacklightLock);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
+    Status = WdfWaitLockCreate(&Attributes, &SwFanGetDevice(Device)->PmicLock);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
     Status = WdfWaitLockCreate(&Attributes, &SwFanGetDevice(Device)->CpuLock);
     if (!NT_SUCCESS(Status)) {
         return Status;

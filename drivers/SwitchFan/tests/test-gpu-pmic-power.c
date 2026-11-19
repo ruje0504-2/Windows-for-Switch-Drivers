@@ -59,6 +59,17 @@ static bool bl_locked = false;
 static unsigned pmic_lock_acquires = 0;
 static int requestor_mode = KernelMode;
 static bool fail_pmic_write = false;
+static unsigned pmic_read_calls = 0;
+static unsigned fail_pmic_read_at = 0;
+static unsigned corrupt_pmic_read_at = 0;
+static UCHAR corrupt_pmic_value = 0;
+static bool fail_sensor_config = false;
+static bool fail_sensor_read = false;
+static UCHAR sensor_remote_temp = 41;
+static UCHAR sensor_local_temp = 38;
+static unsigned sensor_config_calls = 0;
+static unsigned sensor_read_calls = 0;
+static ULONGLONG mock_time = 10000000ULL;
 static unsigned timer_starts = 0;
 static unsigned last_timer_ms = 0;
 static UCHAR pmic_regs[256];
@@ -78,6 +89,7 @@ typedef struct {
     UCHAR *Pwm;
     LITE_PERFORMANCE Config;
     void *Pmic;
+    void *Sensor;
     void *Timer;
     WDFWAITLOCK PmicLock;
     WDFWAITLOCK BacklightLock;
@@ -182,7 +194,25 @@ static NTSTATUS WdfRequestRetrieveOutputBuffer(WDFREQUEST r, size_t min_len, PVO
 }
 static NTSTATUS SwFanReadReg(void *t, UCHAR reg, UCHAR *v)
 {
-    assert(t != NULL && pmic_locked);
+    assert(t != NULL);
+    if (t == (void *)2) {
+        assert(!pmic_locked);
+        ++sensor_read_calls;
+        if (fail_sensor_read) return STATUS_IO_TIMEOUT;
+        *v = (reg == 1) ? sensor_remote_temp : sensor_local_temp;
+        return STATUS_SUCCESS;
+    }
+    assert(pmic_locked);
+    ++pmic_read_calls;
+    if (fail_pmic_read_at && pmic_read_calls == fail_pmic_read_at) {
+        fail_pmic_read_at = 0;
+        return STATUS_IO_TIMEOUT;
+    }
+    if (corrupt_pmic_read_at && pmic_read_calls == corrupt_pmic_read_at) {
+        corrupt_pmic_read_at = 0;
+        *v = corrupt_pmic_value;
+        return STATUS_SUCCESS;
+    }
     *v = pmic_regs[reg];
     return STATUS_SUCCESS;
 }
@@ -212,7 +242,7 @@ static void KeDelayExecutionThread(int m, bool a, LARGE_INTEGER *d) { (void)m; (
 static void KeRaiseIrql(unsigned i, KIRQL *o) { (void)i; *o = 0; }
 static void KeLowerIrql(KIRQL i) { (void)i; }
 static void KeStallExecutionProcessor(unsigned n) { (void)n; }
-static ULONGLONG KeQueryInterruptTime(void) { return 10000000; }
+static ULONGLONG KeQueryInterruptTime(void) { return mock_time; }
 #define KeMemoryBarrier() ((void)0)
 static LONG InterlockedExchange(volatile LONG *dst, LONG val)
 { LONG old = *dst; *dst = val; return old; }
@@ -263,6 +293,59 @@ static void regwrite(ULONG *p, ULONG v)
 static ULONG SwFanDfllReadKhz(PSWFAN_DEVICE);
 static NTSTATUS SwFanDfllStopLocked(PSWFAN_DEVICE);
 static NTSTATUS SwFanDvfsUpdateLocked(PSWFAN_DEVICE, ULONG, BOOLEAN);
+#define TMP451_LOCAL  0x00
+#define TMP451_REMOTE 0x01
+static NTSTATUS SwFanConfigureSensor(void *t)
+{
+    assert(t == (void *)2 && !pmic_locked);
+    ++sensor_config_calls;
+    return fail_sensor_config ? STATUS_IO_TIMEOUT : STATUS_SUCCESS;
+}
+#define SWFAN_HAVE_TEMP_REFRESH 1
+static NTSTATUS SwFanRefreshTemp(PSWFAN_DEVICE Dev, PULONG TempOut)
+{
+    UCHAR Local = 0, Remote = 0;
+    BOOLEAN NeedReinit = FALSE;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (Dev->Sensor == NULL) return STATUS_DEVICE_NOT_READY;
+    if (Dev->BacklightLock != NULL) WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+    if (Dev->Stopping) {
+        if (Dev->BacklightLock != NULL) WdfWaitLockRelease(Dev->BacklightLock);
+        return STATUS_DEVICE_NOT_READY;
+    }
+    NeedReinit = Dev->IsLite && (Dev->SensorNeedsReinit || Dev->ScreenOffIdle);
+    if (NeedReinit) Dev->SensorNeedsReinit = FALSE;
+    if (Dev->BacklightLock != NULL) WdfWaitLockRelease(Dev->BacklightLock);
+
+    if (NeedReinit) {
+        Status = SwFanConfigureSensor(Dev->Sensor);
+        if (!NT_SUCCESS(Status)) {
+            if (Dev->BacklightLock != NULL) WdfWaitLockAcquire(Dev->BacklightLock, NULL);
+            Dev->SensorNeedsReinit = TRUE;
+            if (Dev->BacklightLock != NULL) WdfWaitLockRelease(Dev->BacklightLock);
+        }
+    }
+    if (NT_SUCCESS(Status)) Status = SwFanReadReg(Dev->Sensor, TMP451_REMOTE, &Remote);
+    if (NT_SUCCESS(Status)) Status = SwFanReadReg(Dev->Sensor, TMP451_LOCAL, &Local);
+    if (NT_SUCCESS(Status)) {
+        ULONG Temp = (Remote > Local) ? Remote : Local;
+        SwFanCpuLock(Dev);
+        Dev->LastTemp = Temp;
+        Dev->TempValid = TRUE;
+        Dev->SocTempC = Remote;
+        Dev->BoardTempC = Local;
+        Dev->TempSampleTime = KeQueryInterruptTime();
+        SwFanCpuUnlock(Dev);
+        *TempOut = Temp;
+        return STATUS_SUCCESS;
+    }
+    SwFanCpuLock(Dev);
+    Dev->TempValid = FALSE;
+    Dev->TempSampleTime = 0;
+    SwFanCpuUnlock(Dev);
+    return Status;
+}
 #include "../src/t214/clock.h"
 #include "../src/t214/dfll_windows.h"
 #include "../src/t214/gpu_pmic.h"
@@ -319,7 +402,7 @@ static NTSTATUS send_gpu_pmic(PSWFAN_DEVICE d, struct tg_gpu_pmic_request *op)
     struct mock_request req = { op, sizeof(*op), op, sizeof(*op) };
     ULONG_PTR info = 0;
     NTSTATUS st = SwFanGpuPmic(d, &req, &info);
-    assert(!pmic_locked && !bl_locked);
+    assert(!pmic_locked && !bl_locked && !cpu_locked);
     if (NT_SUCCESS(st)) assert(info == sizeof(*op));
     return st;
 }
@@ -363,7 +446,9 @@ int main(void)
     d.Config.Status = LitePerfReady;
     d.Config.PmicAddress = 0x33;
     d.ConnectionCount = 3;
+    d.Sensor = (void *)2;
     d.TempValid = TRUE;
+    d.TempSampleTime = mock_time;
     d.LastTemp = 41;
     d.Duty = 51;
     d.CpuOverclockEnabled = TRUE;
@@ -381,18 +466,20 @@ int main(void)
     assert(send_gpu_pmic(&d, &op) == STATUS_ACCESS_DENIED);
     requestor_mode = KernelMode;
 
-    /* 2. M1 enable requires valid M1_VOUT >= 590 mV (code >= 68); RMW preserves 0x54. */
+    /* 2. M1 enable requires valid M1_VOUT >= 590 mV (code >= 68); RMW preserves 0x54.
+     * Fresh cached temperature does not incur extra sensor I/O; off-rail VOUT write does not publish uV. */
     op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
     assert(send_gpu_pmic(&d, &op) == STATUS_INVALID_DEVICE_STATE);
     op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 110 }; /* 800 mV while off */
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x23] == 110);
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x23] == 110 && d.GpuReportedUv == 0);
     op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x06] == 0x55);
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x06] == 0x55 && d.GpuRailOn);
+    assert(d.GpuReportedUv == 800000u && sensor_read_calls == 0);
 
     /* 3. Live M1 bounds: 68..160 (590..1050 mV) allowed; <68 rejected while M1 on! */
     locks_before = pmic_lock_acquires;
     op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 68 };
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x23] == 68);
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x23] == 68 && d.GpuReportedUv == 590000u);
     assert(pmic_lock_acquires == locks_before + 1);
     op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 67 };
     assert(send_gpu_pmic(&d, &op) == STATUS_INVALID_PARAMETER && pmic_regs[0x23] == 68);
@@ -404,21 +491,78 @@ int main(void)
     op = (struct tg_gpu_pmic_request){ 0x33, 0x25, 0, 0 };
     assert(send_gpu_pmic(&d, &op) == STATUS_INVALID_PARAMETER);
 
-    /* Disabling M1 allows restoring cold pre-acquisition voltage (<68), preserving 0x54! */
+    /* Disabling M1 clears rail telemetry and allows restoring cold pre-acquisition voltage (<68). */
     d.Timer = (void *)1;
+    d.GpuReportedKhz = 844800u; d.GpuSampleTime = mock_time;
     op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 0 };
     assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x06] == 0x54 && !d.GpuRailOn);
+    assert(d.GpuReportedUv == 0 && d.GpuReportedKhz == 0 && d.GpuSampleTime == 0);
     op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 20 };
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x23] == 20);
-    /* Re-enable at 800 mV while parked in ScreenOffIdle wakes thermal polling immediately! */
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && pmic_regs[0x23] == 20 && d.GpuReportedUv == 0);
+
+    /* 4. Fresh temperature enforcement: stale cache triggers sensor refresh and blocks overtemp >= 80 C. */
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 110 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && d.GpuReportedUv == 0);
+    mock_time += 70000000ULL; /* > 6 s stale */
+    sensor_remote_temp = 82; sensor_local_temp = 40;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_DEVICE_NOT_READY && !d.GpuRailOn && pmic_regs[0x06] == 0x54 && d.LastTemp == 82);
+    /* Post-D0Entry invalid temp refreshes from sensor on query/enable and fails safe on I2C error. */
+    d.TempValid = FALSE; d.TempSampleTime = 0; fail_sensor_read = true;
+    op = (struct tg_gpu_pmic_request){ 0, TG_GPU_PMIC_QUERY_TEMP, 0, 0 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_DEVICE_NOT_READY);
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_DEVICE_NOT_READY && !d.GpuRailOn);
+    fail_sensor_read = false; sensor_remote_temp = 44; sensor_local_temp = 39;
+    op = (struct tg_gpu_pmic_request){ 0, TG_GPU_PMIC_QUERY_TEMP, 0, 0 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && op.value == 44 && d.TempValid && d.TempSampleTime == mock_time);
+
+    /* Re-enable at 800 mV while parked in ScreenOffIdle reinitializes TMP451 before enabling rail,
+     * refuses enable on sensor config failure, and wakes cooling + 50 ms polling on success. */
     d.ScreenOffIdle = TRUE;
     d.SensorNeedsReinit = FALSE;
+    d.Duty = 0;
     timer_starts = 0;
-    op = (struct tg_gpu_pmic_request){ 0x33, 0x23, 1, 110 };
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS);
+    fail_sensor_config = true;
     op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
-    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && d.GpuRailOn);
-    assert(!d.ScreenOffIdle && d.SensorNeedsReinit && timer_starts == 1 && last_timer_ms == 50);
+    assert(send_gpu_pmic(&d, &op) == STATUS_DEVICE_NOT_READY && !d.GpuRailOn && d.ScreenOffIdle && d.SensorNeedsReinit && !d.TempValid && timer_starts == 0);
+    fail_sensor_config = false; sensor_remote_temp = 41;
+    unsigned cfg_before = sensor_config_calls;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && d.GpuRailOn && d.GpuReportedUv == 800000u);
+    assert(!d.ScreenOffIdle && !d.SensorNeedsReinit && d.TempValid && d.LastTemp == 41 && d.Duty == 76);
+    assert(sensor_config_calls == cfg_before + 1 && timer_starts == 1 && last_timer_ms == 50);
+
+    /* Disabling M1 remains allowed even if the sensor is failing; failed write does not publish rail-on. */
+    d.TempValid = FALSE; d.TempSampleTime = 0; fail_sensor_read = true;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 0 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && !d.GpuRailOn && d.GpuReportedUv == 0);
+    fail_sensor_read = false; fail_pmic_write = true;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_IO_TIMEOUT && !d.GpuRailOn);
+    fail_pmic_write = false;
+
+    /* Post-write readback failure or bit-mismatch on enable still publishes GpuRailOn and wakes polling;
+     * readback failure on disable keeps GpuRailOn fail-safe TRUE until confirmed off. */
+    d.ScreenOffIdle = TRUE; d.Duty = 0; timer_starts = 0;
+    fail_pmic_read_at = pmic_read_calls + 3;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_IO_TIMEOUT && d.GpuRailOn && d.GpuReportedUv == 800000u);
+    assert(!d.ScreenOffIdle && d.Duty == 76 && timer_starts == 1 && last_timer_ms == 50);
+    fail_pmic_read_at = pmic_read_calls + 2;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 0 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_IO_TIMEOUT && d.GpuRailOn);
+    pmic_regs[0x06] = 0x55;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 0 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_SUCCESS && !d.GpuRailOn && d.GpuReportedUv == 0);
+    d.ScreenOffIdle = TRUE; timer_starts = 0;
+    corrupt_pmic_read_at = pmic_read_calls + 3; corrupt_pmic_value = 0x57;
+    op = (struct tg_gpu_pmic_request){ 0x33, 0x06, 1, 1 };
+    assert(send_gpu_pmic(&d, &op) == STATUS_DEVICE_DATA_ERROR && d.GpuRailOn && !d.ScreenOffIdle && timer_starts == 1);
+    d.Stopping = TRUE;
+    assert(send_gpu_pmic(&d, &op) == STATUS_DEVICE_NOT_READY);
+    d.Stopping = FALSE;
+    d.Duty = 51;
 
     /* Profiles follow the captured nvpmodel requests, and use the DFLL
      * adapter/core, not the legacy two PLLX steps. */

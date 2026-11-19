@@ -43,7 +43,15 @@
 #define VETO_DISPLAY_OR_CLOCK  1u
 #define VETO_SC7_DISABLED      2u
 #define VETO_SC7_DEVICES_BUSY  3u
-#define VETO_COUNT             3u
+#define VETO_SYSTEM_TRANSITION 4u
+#define VETO_COUNT             4u
+
+#define ADMIT_PERIPHERAL_MASK      0x00FFFFFFu
+#define ADMIT_POWER_IRP_TRANSITION (1u << 27)
+#define ADMIT_DISPLAY_OFF          (1u << 28)
+#define ADMIT_SC7_ENABLED          (1u << 29)
+#define ADMIT_PPM_SYSTEM_STATE     (1u << 30)
+#define ADMIT_SYSTEM_TRANSITION    (ADMIT_POWER_IRP_TRANSITION | ADMIT_PPM_SYSTEM_STATE)
 
 typedef enum _T214_HANDLE_TAG {
     T214HandleCpu = 1,
@@ -93,6 +101,8 @@ static T214_PERIPHERAL Peripherals[] = {
 #define PERIPHERAL_COUNT RTL_NUMBER_OF(Peripherals)
 
 static PEP_KERNEL_INFORMATION Kernel;
+static KSPIN_LOCK PeripheralLock;
+static volatile LONG AdmissionState = 0x1F;
 static volatile LONG DisplayOffState;
 static volatile LONG PendingDisplayOff;
 static volatile LONG Sc7Enabled;
@@ -112,6 +122,7 @@ static const PCWSTR CpuPaths[CPU_COUNT] = {L"\\_SB.CPU0",L"\\_SB.CPU1",L"\\_SB.C
 DRIVER_INITIALIZE DriverEntry;
 DRIVER_ADD_DEVICE AddDevice;
 DRIVER_DISPATCH DispatchPnp;
+DRIVER_DISPATCH DispatchPower;
 DRIVER_DISPATCH DispatchForward;
 IO_WORKITEM_ROUTINE Snapshot;
 PEPCALLBACKPOWERONCRASHDUMPDEVICE PowerOnCrashdumpDevice;
@@ -126,7 +137,9 @@ typedef struct _T214_DEVICE {
     PVOID DisplayCallback;
     KSPIN_LOCK Lock;
     KEVENT Idle;
+    ULONG Generation;
     BOOLEAN Queued;
+    BOOLEAN Dirty;
     BOOLEAN Stopping;
 } T214_DEVICE;
 static T214_DEVICE *AttachedDevice;
@@ -138,13 +151,27 @@ static VOID Trace(PCWSTR Name, ULONG Value)
     }
 }
 
-static VOID RefreshEnableSc7FromRegistry(VOID)
+static VOID UpdateAdmissionBits(ULONG ClearMask, ULONG SetMask)
+{
+    LONG oldVal, newVal;
+    do {
+        oldVal = InterlockedCompareExchange(&AdmissionState, 0, 0);
+        newVal = (LONG)((((ULONG)oldVal) & ~ClearMask) | SetMask);
+    } while (InterlockedCompareExchange(&AdmissionState, newVal, oldVal) != oldVal);
+}
+
+static ULONG ReadAdmissionSnapshot(VOID)
+{
+    return (ULONG)InterlockedCompareExchange(&AdmissionState, 0, 0);
+}
+
+static LONG ReadEnableSc7FromRegistry(VOID)
 {
     ULONG Value = 0;
     RTL_QUERY_REGISTRY_TABLE Table[2];
 
     if (!Parameters[0] || KeGetCurrentIrql() != PASSIVE_LEVEL) {
-        return;
+        return InterlockedCompareExchange(&Sc7Enabled, 0, 0);
     }
     RtlZeroMemory(Table, sizeof(Table));
     Table[0].Flags = RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK;
@@ -154,7 +181,14 @@ static VOID RefreshEnableSc7FromRegistry(VOID)
     if (!NT_SUCCESS(RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE, Parameters, Table, NULL, NULL))) {
         Value = 0;
     }
-    InterlockedExchange(&Sc7Enabled, Value != 0 ? 1 : 0);
+    return Value != 0 ? 1 : 0;
+}
+
+static VOID RefreshEnableSc7FromRegistry(VOID)
+{
+    LONG sc7 = ReadEnableSc7FromRegistry();
+    InterlockedExchange(&Sc7Enabled, sc7);
+    UpdateAdmissionBits(ADMIT_SC7_ENABLED, sc7 ? ADMIT_SC7_ENABLED : 0u);
 }
 
 static T214_CPU *FindCpu(PCUNICODE_STRING Id)
@@ -214,14 +248,14 @@ static ULONG OnlineCount(VOID)
     return count;
 }
 
-static BOOLEAN CanPowerDown(VOID)
+static BOOLEAN ClockCanPowerDown(VOID)
 {
     static const ULONG Pdiv[] = {1,2,3,4,5,6,8,10,12,16,12,16,20,24,32,32};
     ULONG policy, pll, m, n, p, khz;
 
     /* SwitchFan restores the boot CPU clock (~998.4-1020 MHz) before screen-off
      * cooling settles. Never race an in-progress PLL relock or power-gate at OC. */
-    if (!InterlockedCompareExchange(&DisplayOffState, 0, 0) || !Car) {
+    if (!Car) {
         return FALSE;
     }
     policy = READ_REGISTER_ULONG((PULONG)(Car + 0x20));
@@ -237,49 +271,46 @@ static BOOLEAN CanPowerDown(VOID)
     return khz > 0u && khz <= 1020000u;
 }
 
-static ULONG ComputeSc7BlockingMask(VOID)
+static ULONG RecomputeSc7BlockingMaskLocked(VOID)
 {
     ULONG mask = 0, i, c;
     for (i = 0; i < PERIPHERAL_COUNT; i++) {
         T214_PERIPHERAL *p = &Peripherals[i];
-        LONG reg = InterlockedCompareExchange(&p->Registered, 0, 0);
-        LONG dstate = InterlockedCompareExchange(&p->PowerState, 0, 0);
-        if (!reg) {
+        if (!p->Registered) {
             if (p->Required) {
                 mask |= (1u << p->BitIndex);
             }
             continue;
         }
-        if (dstate != (LONG)PowerDeviceD3 || p->ComponentCount > MAX_COMP_TRACKED) {
+        if (p->PowerState != (LONG)PowerDeviceD3 || p->ComponentCount > MAX_COMP_TRACKED) {
             mask |= (1u << p->BitIndex);
             continue;
         }
         for (c = 0; c < p->ComponentCount && c < MAX_COMP_TRACKED; c++) {
             ULONG idle_cnt = p->ComponentIdleCount[c];
-            LONG fstate = InterlockedCompareExchange(&p->ComponentFState[c], 0, 0);
-            if (idle_cnt > 1u && fstate < (LONG)(idle_cnt - 1u)) {
+            LONG fstate = p->ComponentFState[c];
+            if (idle_cnt > 1u && (fstate < 0 || (ULONG)fstate < idle_cnt - 1u)) {
                 mask |= (1u << p->BitIndex);
                 break;
             }
         }
     }
+    UpdateAdmissionBits(ADMIT_PERIPHERAL_MASK, mask & ADMIT_PERIPHERAL_MASK);
     return mask;
 }
 
-static BOOLEAN PeripheralsReadyForSc7(VOID)
+static ULONG ComputeSc7BlockingMask(VOID)
 {
-    return ComputeSc7BlockingMask() == 0u;
+    return ReadAdmissionSnapshot() & ADMIT_PERIPHERAL_MASK;
 }
 
 BOOLEAN PowerOnCrashdumpDevice(PPEP_CRASHDUMP_INFORMATION CrashdumpInformation)
 {
-    T214_PERIPHERAL *dev = PeripheralHandle(CrashdumpInformation->DeviceHandle);
+    T214_PERIPHERAL *dev = CrashdumpInformation ? PeripheralHandle(CrashdumpInformation->DeviceHandle) : NULL;
     /* HIGH_LEVEL, interrupts disabled: the normal WDF/I2C power-on path is
      * unavailable.  Only acknowledge an already completed D0 with no PoFx
      * components. D3/component recovery needs a separate dump-safe path. */
-    return dev != NULL && dev->ComponentCount == 0u &&
-           InterlockedCompareExchange(&dev->Registered, 0, 0) &&
-           InterlockedCompareExchange(&dev->DumpPowerReady, 0, 0);
+    return dev != NULL && InterlockedCompareExchange(&dev->DumpPowerReady, 0, 0) != 0;
 }
 
 static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
@@ -308,21 +339,29 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         }
         if (dev) {
             ULONG c, count = 0;
-            dev->Kernel = a->KernelHandle;
+            ULONG idle_counts[MAX_COMP_TRACKED] = {0};
+            KIRQL irql;
             if (a->Register != NULL) {
                 PPEP_COMPONENT_V2 *comps = &a->Register->Components[0];
                 count = a->Register->ComponentCount;
                 for (c = 0; c < count && c < MAX_COMP_TRACKED; c++) {
                     PPEP_COMPONENT_V2 comp = comps[c];
-                    dev->ComponentIdleCount[c] = comp != NULL ? comp->IdleStateCount : 1u;
-                    InterlockedExchange(&dev->ComponentFState[c], 0);
+                    idle_counts[c] = comp != NULL ? comp->IdleStateCount : 1u;
                 }
+            }
+            KeAcquireSpinLock(&PeripheralLock, &irql);
+            dev->Kernel = a->KernelHandle;
+            for (c = 0; c < MAX_COMP_TRACKED; c++) {
+                dev->ComponentIdleCount[c] = idle_counts[c];
+                InterlockedExchange(&dev->ComponentFState[c], 0);
             }
             dev->ComponentCount = count;
             InterlockedExchange(&dev->DumpPowerReady, 0);
             InterlockedExchange(&dev->Started, 0);
             InterlockedExchange(&dev->PowerState, PowerDeviceD0);
             InterlockedExchange(&dev->Registered, 1);
+            (VOID)RecomputeSc7BlockingMaskLocked();
+            KeReleaseSpinLock(&PeripheralLock, irql);
             a->DeviceHandle = (PEPHANDLE)dev;
             a->DeviceAccepted = PepDeviceAccepted;
             return TRUE;
@@ -340,6 +379,8 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         }
         if (dev) {
             ULONG c;
+            KIRQL irql;
+            KeAcquireSpinLock(&PeripheralLock, &irql);
             InterlockedExchange(&dev->Registered, 0);
             InterlockedExchange(&dev->DumpPowerReady, 0);
             InterlockedExchange(&dev->Started, 0);
@@ -350,6 +391,8 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
                 dev->ComponentIdleCount[c] = 0;
                 InterlockedExchange(&dev->ComponentFState[c], 0);
             }
+            (VOID)RecomputeSc7BlockingMaskLocked();
+            KeReleaseSpinLock(&PeripheralLock, irql);
             return TRUE;
         }
         return FALSE;
@@ -357,7 +400,12 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
     case PEP_DPM_DEVICE_STARTED: {
         T214_PERIPHERAL *dev = PeripheralHandle(((PPEP_DEVICE_STARTED)Data)->DeviceHandle);
         if (dev) {
-            InterlockedExchange(&dev->Started, 1);
+            KIRQL irql;
+            KeAcquireSpinLock(&PeripheralLock, &irql);
+            if (dev->Registered) {
+                InterlockedExchange(&dev->Started, 1);
+            }
+            KeReleaseSpinLock(&PeripheralLock, irql);
             return TRUE;
         }
         return CpuHandle(((PPEP_DEVICE_STARTED)Data)->DeviceHandle) != NULL;
@@ -365,21 +413,38 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
     case PEP_DPM_DEVICE_POWER_STATE: {
         PPEP_DEVICE_POWER_STATE a = Data;
         T214_PERIPHERAL *dev = PeripheralHandle(a->DeviceHandle);
+        DEVICE_POWER_STATE pstate;
+        BOOLEAN complete;
+        KIRQL irql;
         if (CpuHandle(a->DeviceHandle) != NULL) {
             return TRUE;
         }
         if (!dev) {
             return FALSE;
         }
-        InterlockedExchange(&dev->DumpPowerReady,
-                            a->PowerState == PowerDeviceD0 && a->Complete);
-        if (a->PowerState == PowerDeviceD0) {
-            /* Mark active as soon as D0 entry begins so SC7 cannot race a waking device. */
-            InterlockedExchange(&dev->PowerState, PowerDeviceD0);
-        } else if (a->Complete) {
-            /* Mark D3 only after the driver has completed its D3 transition. */
-            InterlockedExchange(&dev->PowerState, a->PowerState);
+        pstate = a->PowerState;
+        complete = a->Complete;
+        KeAcquireSpinLock(&PeripheralLock, &irql);
+        if (!dev->Registered) {
+            KeReleaseSpinLock(&PeripheralLock, irql);
+            return FALSE;
         }
+        InterlockedExchange(&dev->DumpPowerReady,
+                            (dev->ComponentCount == 0u &&
+                             pstate == PowerDeviceD0 &&
+                             complete) ? 1 : 0);
+        if (pstate != PowerDeviceD3) {
+            /* Mark active/non-D3 as soon as leaving D3 begins so SC7 cannot race a waking device. */
+            InterlockedExchange(&dev->PowerState, (LONG)pstate);
+        } else if (complete) {
+            /* Mark D3 only after the driver has completed its D3 transition. */
+            InterlockedExchange(&dev->PowerState, (LONG)PowerDeviceD3);
+        } else {
+            /* Incomplete transition into D3 must never appear D3-ready. */
+            InterlockedExchange(&dev->PowerState, (LONG)PowerDeviceUnspecified);
+        }
+        (VOID)RecomputeSc7BlockingMaskLocked();
+        KeReleaseSpinLock(&PeripheralLock, irql);
         return TRUE;
     }
     case PEP_DPM_NOTIFY_COMPONENT_IDLE_STATE: {
@@ -388,12 +453,28 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         if (!dev && CpuHandle(a->DeviceHandle) == NULL) {
             return FALSE;
         }
-        if (dev && a->Component < MAX_COMP_TRACKED) {
-            if (a->IdleState == 0u && !a->DriverNotified) {
-                InterlockedExchange(&dev->ComponentFState[a->Component], 0);
-            } else if (a->DriverNotified || a->IdleState == 0u) {
-                InterlockedExchange(&dev->ComponentFState[a->Component], (LONG)a->IdleState);
+        if (dev) {
+            ULONG comp = a->Component;
+            ULONG idleState = a->IdleState;
+            BOOLEAN driverNotified = a->DriverNotified;
+            KIRQL irql;
+            KeAcquireSpinLock(&PeripheralLock, &irql);
+            if (!dev->Registered) {
+                KeReleaseSpinLock(&PeripheralLock, irql);
+                return FALSE;
             }
+            if (comp < dev->ComponentCount && comp < MAX_COMP_TRACKED) {
+                LONG current = dev->ComponentFState[comp];
+                if (!driverNotified) {
+                    if (idleState == 0u || (current > 0 && idleState < (ULONG)current)) {
+                        InterlockedExchange(&dev->ComponentFState[comp], (LONG)idleState);
+                    }
+                } else {
+                    InterlockedExchange(&dev->ComponentFState[comp], (LONG)idleState);
+                }
+                (VOID)RecomputeSc7BlockingMaskLocked();
+            }
+            KeReleaseSpinLock(&PeripheralLock, irql);
         }
         a->Completed = TRUE;
         return TRUE;
@@ -429,9 +510,15 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         if (!dev) {
             return FALSE;
         }
-        if (a->Component < dev->ComponentCount && a->Component < MAX_COMP_TRACKED &&
-            dev->ComponentIdleCount[a->Component] > 1u) {
-            deepest = dev->ComponentIdleCount[a->Component] - 1u;
+        {
+            ULONG comp = a->Component;
+            KIRQL irql;
+            KeAcquireSpinLock(&PeripheralLock, &irql);
+            if (dev->Registered && comp < dev->ComponentCount && comp < MAX_COMP_TRACKED &&
+                dev->ComponentIdleCount[comp] > 1u) {
+                deepest = dev->ComponentIdleCount[comp] - 1u;
+            }
+            KeReleaseSpinLock(&PeripheralLock, irql);
         }
         if (a->PlatformStateCount > PLAT_STATE_CC6) {
             a->MinimumFStates[PLAT_STATE_CC6] = PEP_UNSPECIFIED_MINIMUM_STATE;
@@ -457,7 +544,8 @@ static BOOLEAN DeviceNotify(ULONG Notification, PVOID Data)
         return TRUE;
     case PEP_DPM_REGISTER_CRASHDUMP_DEVICE: {
         PPEP_REGISTER_CRASHDUMP_DEVICE a = Data;
-        if (PeripheralHandle(a->DeviceHandle) == NULL) {
+        T214_PERIPHERAL *dev = PeripheralHandle(a->DeviceHandle);
+        if (dev == NULL || !InterlockedCompareExchange(&dev->Registered, 0, 0)) {
             return FALSE;
         }
         a->PowerOnDumpDeviceCallback = PowerOnCrashdumpDevice;
@@ -576,16 +664,33 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle, ULONG Notification, PVOID Data)
     }
     case PEP_NOTIFY_PPM_TEST_IDLE_STATE: {
         PPEP_PPM_TEST_IDLE_STATE a = Data;
-        if (a->ProcessorState != IDLE_WFI && !CanPowerDown()) {
-            a->VetoReason = VETO_DISPLAY_OR_CLOCK;
-            return TRUE;
+        ULONG snap = ReadAdmissionSnapshot();
+        if (a->ProcessorState != IDLE_WFI || a->PlatformState != PEP_PLATFORM_IDLE_STATE_NONE) {
+            if ((snap & ADMIT_SYSTEM_TRANSITION) != 0u) {
+                a->VetoReason = VETO_SYSTEM_TRANSITION;
+                return TRUE;
+            }
+            if ((snap & ADMIT_DISPLAY_OFF) == 0u || !ClockCanPowerDown()) {
+                a->VetoReason = VETO_DISPLAY_OR_CLOCK;
+                return TRUE;
+            }
+            /* Re-sample coherent admission snapshot after CAR MMIO read. */
+            snap = ReadAdmissionSnapshot();
+            if ((snap & ADMIT_SYSTEM_TRANSITION) != 0u) {
+                a->VetoReason = VETO_SYSTEM_TRANSITION;
+                return TRUE;
+            }
+            if ((snap & ADMIT_DISPLAY_OFF) == 0u) {
+                a->VetoReason = VETO_DISPLAY_OR_CLOCK;
+                return TRUE;
+            }
         }
         if (a->ProcessorState == IDLE_SC7 || a->PlatformState == PLAT_STATE_SC7) {
-            if (!InterlockedCompareExchange(&Sc7Enabled, 0, 0)) {
+            if ((snap & ADMIT_SC7_ENABLED) == 0u) {
                 a->VetoReason = VETO_SC7_DISABLED;
                 return TRUE;
             }
-            if (!PeripheralsReadyForSc7()) {
+            if ((snap & ADMIT_PERIPHERAL_MASK) != 0u) {
                 a->VetoReason = VETO_SC7_DEVICES_BUSY;
                 return TRUE;
             }
@@ -595,7 +700,7 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle, ULONG Notification, PVOID Data)
     }
     case PEP_NOTIFY_PPM_IDLE_EXECUTE: {
         PPEP_PPM_IDLE_EXECUTE_V2 a = Data;
-        ULONG state;
+        ULONG state, snap;
         BOOLEAN isSc7 = FALSE;
         if (!cpu) return FALSE;
         if (a->ProcessorState >= IDLE_COUNT ||
@@ -603,14 +708,31 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle, ULONG Notification, PVOID Data)
             a->Status = STATUS_INVALID_PARAMETER;
             return TRUE;
         }
-        if (a->ProcessorState == IDLE_WFI || !CanPowerDown()) {
+        if (a->ProcessorState == IDLE_WFI) {
+            __dmb(_ARM64_BARRIER_SY);
+            __wfi();
+            a->Status = STATUS_SUCCESS;
+            return TRUE;
+        }
+        snap = ReadAdmissionSnapshot();
+        if ((snap & ADMIT_SYSTEM_TRANSITION) != 0u ||
+            (snap & ADMIT_DISPLAY_OFF) == 0u ||
+            !ClockCanPowerDown()) {
+            __dmb(_ARM64_BARRIER_SY);
+            __wfi();
+            a->Status = STATUS_SUCCESS;
+            return TRUE;
+        }
+        /* Re-sample coherent admission word after CAR MMIO read so final admission is atomic. */
+        snap = ReadAdmissionSnapshot();
+        if ((snap & ADMIT_SYSTEM_TRANSITION) != 0u || (snap & ADMIT_DISPLAY_OFF) == 0u) {
             __dmb(_ARM64_BARRIER_SY);
             __wfi();
             a->Status = STATUS_SUCCESS;
             return TRUE;
         }
         if (a->PlatformState == PLAT_STATE_SC7) {
-            if (InterlockedCompareExchange(&Sc7Enabled, 0, 0) && PeripheralsReadyForSc7()) {
+            if ((snap & ADMIT_SC7_ENABLED) != 0u && (snap & ADMIT_PERIPHERAL_MASK) == 0u) {
                 state = PSCI_SOC_POWERDOWN;
                 isSc7 = TRUE;
                 InterlockedIncrement(&Sc7Attempts);
@@ -645,8 +767,16 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle, ULONG Notification, PVOID Data)
         return TRUE;
     }
     case PEP_NOTIFY_PPM_IDLE_COMPLETE:
-    case PEP_NOTIFY_PPM_ENTER_SYSTEM_STATE:
+        return TRUE;
+    case PEP_NOTIFY_PPM_ENTER_SYSTEM_STATE: {
+        PPEP_PPM_ENTER_SYSTEM_STATE a = Data;
+        if (!a || a->TargetState > PowerSystemWorking) {
+            UpdateAdmissionBits(0u, ADMIT_PPM_SYSTEM_STATE);
+        }
+        return TRUE;
+    }
     case PEP_NOTIFY_PPM_RESUME_FROM_SYSTEM_STATE:
+        UpdateAdmissionBits(ADMIT_PPM_SYSTEM_STATE, 0u);
         return TRUE;
     case PEP_NOTIFY_PPM_LPI_SUPPORTED:
         ((PPEP_PPM_LPI_SUPPORTED)Data)->OverrideLpiStates = TRUE;
@@ -667,6 +797,7 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle, ULONG Notification, PVOID Data)
         static const WCHAR v1[] = L"Display active or CPU clock transition";
         static const WCHAR v2[] = L"SC7 opt-in disabled (EnableSc7=0)";
         static const WCHAR v3[] = L"Critical peripherals not yet in D3";
+        static const WCHAR v4[] = L"System power state transition in progress";
         const WCHAR *src = NULL;
         USHORT bytes = 0;
         if (a->VetoReason == VETO_DISPLAY_OR_CLOCK) {
@@ -675,6 +806,8 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle, ULONG Notification, PVOID Data)
             src = v2; bytes = sizeof(v2);
         } else if (a->VetoReason == VETO_SC7_DEVICES_BUSY) {
             src = v3; bytes = sizeof(v3);
+        } else if (a->VetoReason == VETO_SYSTEM_TRANSITION) {
+            src = v4; bytes = sizeof(v4);
         } else {
             return FALSE;
         }
@@ -689,16 +822,24 @@ static BOOLEAN ProcessorNotify(PEPHANDLE Handle, ULONG Notification, PVOID Data)
     }
 }
 
+static VOID QueueSnapshotLocked(T214_DEVICE *Device)
+{
+    if (!Device->Stopping) {
+        Device->Dirty = TRUE;
+        if (!Device->Queued) {
+            Device->Queued = TRUE;
+            KeClearEvent(&Device->Idle);
+            IoQueueWorkItem(Device->Work, Snapshot, DelayedWorkQueue, Device);
+        }
+    }
+}
+
 static VOID QueueSnapshot(T214_DEVICE *Device)
 {
     KIRQL irql;
     if (!Device) return;
     KeAcquireSpinLock(&Device->Lock, &irql);
-    if (!Device->Stopping && !Device->Queued) {
-        Device->Queued = TRUE;
-        KeClearEvent(&Device->Idle);
-        IoQueueWorkItem(Device->Work, Snapshot, DelayedWorkQueue, Device);
-    }
+    QueueSnapshotLocked(Device);
     KeReleaseSpinLock(&Device->Lock, irql);
 }
 
@@ -706,12 +847,28 @@ static NTSTATUS DisplayChanged(LPCGUID Setting, PVOID Value, ULONG Length, PVOID
 {
     if (IsEqualGUID(Setting, &DisplayGuid) && Length == sizeof(ULONG)) {
         LONG off = (*(PULONG)Value == 0) ? 1 : 0;
-        InterlockedExchange(&PendingDisplayOff, off);
-        if (!off || !Context) {
-            /* Veto power-down immediately when display wakes; defer arming until Snapshot refreshes EnableSc7. */
+        T214_DEVICE *device = (T214_DEVICE *)Context;
+        if (!device) {
+            InterlockedExchange(&PendingDisplayOff, off);
             InterlockedExchange(&DisplayOffState, off);
+            UpdateAdmissionBits(ADMIT_DISPLAY_OFF, off ? ADMIT_DISPLAY_OFF : 0u);
+            return STATUS_SUCCESS;
         }
-        QueueSnapshot((T214_DEVICE *)Context);
+        {
+            KIRQL irql;
+            KeAcquireSpinLock(&device->Lock, &irql);
+            if (!device->Stopping) {
+                InterlockedExchange(&PendingDisplayOff, off);
+                device->Generation++;
+                if (!off) {
+                    /* Veto power-down immediately when display wakes; defer arming until Snapshot refreshes EnableSc7. */
+                    InterlockedExchange(&DisplayOffState, 0);
+                    UpdateAdmissionBits(ADMIT_DISPLAY_OFF, 0u);
+                }
+                QueueSnapshotLocked(device);
+            }
+            KeReleaseSpinLock(&device->Lock, irql);
+        }
     }
     return STATUS_SUCCESS;
 }
@@ -719,42 +876,119 @@ static NTSTATUS DisplayChanged(LPCGUID Setting, PVOID Value, ULONG Length, PVOID
 VOID Snapshot(PDEVICE_OBJECT Object, PVOID Context)
 {
     T214_DEVICE *device = Context;
-    ULONG attempts = 0, returns = 0, i;
+    ULONG attempts, returns, i, generation;
+    LONG sc7, off;
     KIRQL irql;
     UNREFERENCED_PARAMETER(Object);
 
-    /* Registry I/O starts only after PnP start, never during early PEP load. */
-    (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, Parameters);
-    RefreshEnableSc7FromRegistry();
-    if (!device->Stopping) {
-        InterlockedExchange(&DisplayOffState, InterlockedCompareExchange(&PendingDisplayOff, 0, 0));
-    }
-    Trace(L"RegisterStatus", (ULONG)RegisterStatus);
-    Trace(L"DriverVersion", 3);
-    Trace(L"EnableSc7Active", (ULONG)InterlockedCompareExchange(&Sc7Enabled, 0, 0));
-    for (i = 0; i < CPU_COUNT; i++) {
-        attempts += (ULONG)InterlockedCompareExchange(&Cpus[i].Attempts, 0, 0);
-        returns += (ULONG)InterlockedCompareExchange(&Cpus[i].Returns, 0, 0);
-        if (Cpus[i].Enumerated) {
-            Trace(L"LastHaltStatus", (ULONG)InterlockedCompareExchange(&Cpus[i].LastStatus, 0, 0));
+    for (;;) {
+        KeAcquireSpinLock(&device->Lock, &irql);
+        if (device->Stopping) {
+            InterlockedExchange(&PendingDisplayOff, 0);
+            InterlockedExchange(&DisplayOffState, 0);
+            UpdateAdmissionBits(ADMIT_DISPLAY_OFF, 0u);
+            device->Dirty = FALSE;
+            device->Queued = FALSE;
+            KeSetEvent(&device->Idle, IO_NO_INCREMENT, FALSE);
+            KeReleaseSpinLock(&device->Lock, irql);
+            return;
         }
-    }
-    Trace(L"HaltAttempts", attempts);
-    Trace(L"HaltReturns", returns);
-    Trace(L"Cc6Attempts", (ULONG)InterlockedCompareExchange(&Cc6Attempts, 0, 0));
-    Trace(L"Sc7Attempts", (ULONG)InterlockedCompareExchange(&Sc7Attempts, 0, 0));
-    Trace(L"Sc7Returns", (ULONG)InterlockedCompareExchange(&Sc7Returns, 0, 0));
-    Trace(L"Sc7Failures", (ULONG)InterlockedCompareExchange(&Sc7Failures, 0, 0));
-    Trace(L"Sc7Downgrades", (ULONG)InterlockedCompareExchange(&Sc7Downgrades, 0, 0));
-    Trace(L"LastSc7Status", (ULONG)InterlockedCompareExchange(&LastSc7Status, 0, 0));
-    Trace(L"Sc7BlockingMask", ComputeSc7BlockingMask());
-    Trace(L"ProcessorCount", OnlineCount());
-    Trace(L"DisplayOff", (ULONG)InterlockedCompareExchange(&DisplayOffState, 0, 0));
+        device->Dirty = FALSE;
+        generation = device->Generation;
+        KeReleaseSpinLock(&device->Lock, irql);
 
-    KeAcquireSpinLock(&device->Lock, &irql);
-    device->Queued = FALSE;
-    KeSetEvent(&device->Idle, IO_NO_INCREMENT, FALSE);
-    KeReleaseSpinLock(&device->Lock, irql);
+        /* Registry I/O starts only after PnP start, never during early PEP load. */
+        (VOID)RtlCreateRegistryKey(RTL_REGISTRY_ABSOLUTE, Parameters);
+        sc7 = ReadEnableSc7FromRegistry();
+
+        KeAcquireSpinLock(&device->Lock, &irql);
+        if (device->Stopping) {
+            InterlockedExchange(&PendingDisplayOff, 0);
+            InterlockedExchange(&DisplayOffState, 0);
+            UpdateAdmissionBits(ADMIT_DISPLAY_OFF, 0u);
+            device->Dirty = FALSE;
+            device->Queued = FALSE;
+            KeSetEvent(&device->Idle, IO_NO_INCREMENT, FALSE);
+            KeReleaseSpinLock(&device->Lock, irql);
+            return;
+        }
+        if (device->Generation != generation) {
+            /* A newer display transition arrived during registry refresh; re-evaluate before committing. */
+            KeReleaseSpinLock(&device->Lock, irql);
+            continue;
+        }
+        off = InterlockedCompareExchange(&PendingDisplayOff, 0, 0);
+        InterlockedExchange(&Sc7Enabled, sc7);
+        InterlockedExchange(&DisplayOffState, off);
+        UpdateAdmissionBits(ADMIT_SC7_ENABLED | ADMIT_DISPLAY_OFF,
+                            (sc7 ? ADMIT_SC7_ENABLED : 0u) | (off ? ADMIT_DISPLAY_OFF : 0u));
+        KeReleaseSpinLock(&device->Lock, irql);
+
+        attempts = 0;
+        returns = 0;
+        Trace(L"RegisterStatus", (ULONG)RegisterStatus);
+        Trace(L"DriverVersion", 3);
+        Trace(L"EnableSc7Active", (ULONG)InterlockedCompareExchange(&Sc7Enabled, 0, 0));
+        for (i = 0; i < CPU_COUNT; i++) {
+            attempts += (ULONG)InterlockedCompareExchange(&Cpus[i].Attempts, 0, 0);
+            returns += (ULONG)InterlockedCompareExchange(&Cpus[i].Returns, 0, 0);
+            if (Cpus[i].Enumerated) {
+                Trace(L"LastHaltStatus", (ULONG)InterlockedCompareExchange(&Cpus[i].LastStatus, 0, 0));
+            }
+        }
+        Trace(L"HaltAttempts", attempts);
+        Trace(L"HaltReturns", returns);
+        Trace(L"Cc6Attempts", (ULONG)InterlockedCompareExchange(&Cc6Attempts, 0, 0));
+        Trace(L"Sc7Attempts", (ULONG)InterlockedCompareExchange(&Sc7Attempts, 0, 0));
+        Trace(L"Sc7Returns", (ULONG)InterlockedCompareExchange(&Sc7Returns, 0, 0));
+        Trace(L"Sc7Failures", (ULONG)InterlockedCompareExchange(&Sc7Failures, 0, 0));
+        Trace(L"Sc7Downgrades", (ULONG)InterlockedCompareExchange(&Sc7Downgrades, 0, 0));
+        Trace(L"LastSc7Status", (ULONG)InterlockedCompareExchange(&LastSc7Status, 0, 0));
+        Trace(L"Sc7BlockingMask", ComputeSc7BlockingMask());
+        Trace(L"ProcessorCount", OnlineCount());
+        Trace(L"DisplayOff", (ULONG)InterlockedCompareExchange(&DisplayOffState, 0, 0));
+
+        KeAcquireSpinLock(&device->Lock, &irql);
+        if (device->Stopping || !device->Dirty) {
+            if (device->Stopping) {
+                InterlockedExchange(&PendingDisplayOff, 0);
+                InterlockedExchange(&DisplayOffState, 0);
+                UpdateAdmissionBits(ADMIT_DISPLAY_OFF, 0u);
+            }
+            device->Dirty = FALSE;
+            device->Queued = FALSE;
+            KeSetEvent(&device->Idle, IO_NO_INCREMENT, FALSE);
+            KeReleaseSpinLock(&device->Lock, irql);
+            return;
+        }
+        KeReleaseSpinLock(&device->Lock, irql);
+    }
+}
+
+static VOID StopNotifications(T214_DEVICE *Device)
+{
+    KIRQL irql;
+    PVOID callback;
+    KeAcquireSpinLock(&Device->Lock, &irql);
+    Device->Stopping = TRUE;
+    Device->Dirty = FALSE;
+    Device->Generation++;
+    InterlockedExchange(&PendingDisplayOff, 0);
+    InterlockedExchange(&DisplayOffState, 0);
+    UpdateAdmissionBits(ADMIT_DISPLAY_OFF, 0u);
+    KeReleaseSpinLock(&Device->Lock, irql);
+    callback = Device->DisplayCallback;
+    if (callback) {
+        Device->DisplayCallback = NULL;
+        (VOID)PoUnregisterPowerSettingCallback(callback);
+    }
+    (VOID)KeWaitForSingleObject(&Device->Idle, Executive, KernelMode, FALSE, NULL);
+    /* Synchronize with Snapshot's final spinlock release before Remove can free the FDO. */
+    KeAcquireSpinLock(&Device->Lock, &irql);
+    InterlockedExchange(&PendingDisplayOff, 0);
+    InterlockedExchange(&DisplayOffState, 0);
+    UpdateAdmissionBits(ADMIT_DISPLAY_OFF, 0u);
+    KeReleaseSpinLock(&Device->Lock, irql);
 }
 
 static NTSTATUS StartNotifications(PDEVICE_OBJECT Object)
@@ -765,28 +999,16 @@ static NTSTATUS StartNotifications(PDEVICE_OBJECT Object)
     if (device->DisplayCallback) return STATUS_SUCCESS;
     KeAcquireSpinLock(&device->Lock, &irql);
     device->Stopping = FALSE;
+    device->Dirty = FALSE;
     KeReleaseSpinLock(&device->Lock, irql);
     status = PoRegisterPowerSettingCallback(Object, &DisplayGuid, DisplayChanged,
                                             device, &device->DisplayCallback);
     if (NT_SUCCESS(status)) {
         QueueSnapshot(device);
+    } else {
+        StopNotifications(device);
     }
     return status;
-}
-
-static VOID StopNotifications(T214_DEVICE *Device)
-{
-    KIRQL irql;
-    KeAcquireSpinLock(&Device->Lock, &irql);
-    Device->Stopping = TRUE;
-    KeReleaseSpinLock(&Device->Lock, irql);
-    if (Device->DisplayCallback) {
-        (VOID)PoUnregisterPowerSettingCallback(Device->DisplayCallback);
-        Device->DisplayCallback = NULL;
-    }
-    (VOID)KeWaitForSingleObject(&Device->Idle, Executive, KernelMode, FALSE, NULL);
-    InterlockedExchange(&PendingDisplayOff, 0);
-    InterlockedExchange(&DisplayOffState, 0);
 }
 
 static NTSTATUS Complete(PIRP Irp, NTSTATUS Status)
@@ -823,6 +1045,51 @@ NTSTATUS DispatchForward(PDEVICE_OBJECT Object, PIRP Irp)
     T214_DEVICE *device = Object->DeviceExtension;
     IoSkipCurrentIrpStackLocation(Irp);
     return IoCallDriver(device->Lower, Irp);
+}
+
+static NTSTATUS SystemPowerResumeComplete(PDEVICE_OBJECT Object, PIRP Irp, PVOID Context)
+{
+    UNREFERENCED_PARAMETER(Object);
+    UNREFERENCED_PARAMETER(Context);
+    if (Irp->PendingReturned) {
+        IoMarkIrpPending(Irp);
+    }
+    if (NT_SUCCESS(Irp->IoStatus.Status)) {
+        UpdateAdmissionBits(ADMIT_POWER_IRP_TRANSITION, 0u);
+    }
+    PoStartNextPowerIrp(Irp);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS DispatchPower(PDEVICE_OBJECT Object, PIRP Irp)
+{
+    T214_DEVICE *device = Object->DeviceExtension;
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+
+    switch (stack->MinorFunction) {
+    case IRP_MN_SET_POWER:
+        Irp->IoStatus.Status = STATUS_SUCCESS;
+        if (stack->Parameters.Power.Type == SystemPowerState) {
+            SYSTEM_POWER_STATE target = stack->Parameters.Power.State.SystemState;
+            if (target > PowerSystemWorking) {
+                UpdateAdmissionBits(0u, ADMIT_POWER_IRP_TRANSITION);
+            } else if (target == PowerSystemWorking) {
+                IoCopyCurrentIrpStackLocationToNext(Irp);
+                IoSetCompletionRoutine(Irp, SystemPowerResumeComplete, device, TRUE, TRUE, TRUE);
+                return PoCallDriver(device->Lower, Irp);
+            }
+        }
+        break;
+    case IRP_MN_QUERY_POWER:
+        Irp->IoStatus.Status = STATUS_SUCCESS;
+        break;
+    default:
+        break;
+    }
+
+    PoStartNextPowerIrp(Irp);
+    IoSkipCurrentIrpStackLocation(Irp);
+    return PoCallDriver(device->Lower, Irp);
 }
 
 NTSTATUS DispatchPnp(PDEVICE_OBJECT Object, PIRP Irp)
@@ -932,8 +1199,10 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT Object, PUNICODE_STRING Path)
         Object->MajorFunction[i] = DispatchForward;
     }
     Object->MajorFunction[IRP_MJ_PNP] = DispatchPnp;
+    Object->MajorFunction[IRP_MJ_POWER] = DispatchPower;
     Object->DriverExtension->AddDevice = AddDevice;
     /* No unload callback: PoFx retains processor/device callbacks for this boot. */
+    KeInitializeSpinLock(&PeripheralLock);
     for (i = 0; i < CPU_COUNT; i++) {
         Cpus[i].Tag = T214HandleCpu;
         Cpus[i].Index = i;
@@ -941,6 +1210,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT Object, PUNICODE_STRING Path)
     }
     for (i = 0; i < PERIPHERAL_COUNT; i++) {
         RtlInitUnicodeString(&Peripherals[i].Name, Peripherals[i].Path);
+    }
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&PeripheralLock, &irql);
+        (VOID)RecomputeSc7BlockingMaskLocked();
+        KeReleaseSpinLock(&PeripheralLock, irql);
     }
     RefreshEnableSc7FromRegistry();
 

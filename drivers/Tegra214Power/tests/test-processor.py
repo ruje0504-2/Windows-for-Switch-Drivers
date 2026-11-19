@@ -69,6 +69,7 @@ typedef struct { bool signaled; } KEVENT, *PKEVENT;
 #define DO_DEVICE_INITIALIZING 0x80
 #define DO_POWER_PAGABLE 0x2000
 #define IRP_MJ_MAXIMUM_FUNCTION 0x1b
+#define IRP_MJ_POWER 0x16
 #define IRP_MJ_PNP 0x1b
 #define IRP_MN_START_DEVICE 0x00
 #define IRP_MN_QUERY_REMOVE_DEVICE 0x01
@@ -77,6 +78,10 @@ typedef struct { bool signaled; } KEVENT, *PKEVENT;
 #define IRP_MN_STOP_DEVICE 0x04
 #define IRP_MN_QUERY_CAPABILITIES 0x09
 #define IRP_MN_SURPRISE_REMOVAL 0x17
+#define IRP_MN_WAIT_WAKE 0x00
+#define IRP_MN_POWER_SEQUENCE 0x01
+#define IRP_MN_SET_POWER 0x02
+#define IRP_MN_QUERY_POWER 0x03
 #define _ARM64_BARRIER_SY 15
 
 typedef enum {
@@ -86,6 +91,19 @@ typedef enum {
     PowerDeviceD2 = 3,
     PowerDeviceD3 = 4
 } DEVICE_POWER_STATE;
+
+typedef enum {
+    PowerSystemUnspecified = 0,
+    PowerSystemWorking = 1,
+    PowerSystemSleeping1 = 2,
+    PowerSystemSleeping2 = 3,
+    PowerSystemSleeping3 = 4,
+    PowerSystemHibernate = 5,
+    PowerSystemShutdown = 6
+} SYSTEM_POWER_STATE;
+
+typedef enum { SystemPowerState = 0, DevicePowerState = 1 } POWER_STATE_TYPE;
+typedef union { SYSTEM_POWER_STATE SystemState; DEVICE_POWER_STATE DeviceState; } POWER_STATE;
 
 typedef enum { PepDeviceNotAccepted = 0, PepDeviceAccepted = 1 } PEP_DEVICE_ACCEPTANCE_TYPE;
 
@@ -163,6 +181,7 @@ typedef struct { BOOLEAN Halted; } PEP_PPM_IS_PROCESSOR_HALTED, *PPEP_PPM_IS_PRO
 typedef struct { BOOLEAN NeedInterruptForCompletion; } PEP_PPM_INITIATE_WAKE, *PPEP_PPM_INITIATE_WAKE;
 typedef struct { ULONG VetoReasonCount; } PEP_PPM_QUERY_VETO_REASONS, *PPEP_PPM_QUERY_VETO_REASONS;
 typedef struct { ULONG VetoReason; USHORT NameSize; PWSTR Name; } PEP_PPM_QUERY_VETO_REASON, *PPEP_PPM_QUERY_VETO_REASON;
+typedef struct { SYSTEM_POWER_STATE TargetState; } PEP_PPM_ENTER_SYSTEM_STATE, *PPEP_PPM_ENTER_SYSTEM_STATE, PEP_PPM_RESUME_FROM_SYSTEM_STATE, *PPEP_PPM_RESUME_FROM_SYSTEM_STATE;
 
 typedef BOOLEAN (*PEPCALLBACKNOTIFYDPM)(ULONG, PVOID);
 typedef BOOLEAN (*PEPCALLBACKNOTIFYPPMS)(PEPHANDLE, ULONG, PVOID);
@@ -172,8 +191,14 @@ typedef struct { ULONG Version, Size; PPROCESSOR_HALT_ROUTINE ProcessorHalt; } P
 
 typedef struct { ULONG Flags; PWSTR Name; PVOID EntryContext; ULONG DefaultType; } RTL_QUERY_REGISTRY_TABLE;
 typedef struct { BOOLEAN EjectSupported, Removable, SilentInstall; } DEVICE_CAPABILITIES, *PDEVICE_CAPABILITIES;
-typedef struct { UCHAR MinorFunction; union { struct { PDEVICE_CAPABILITIES Capabilities; } DeviceCapabilities; } Parameters; } IO_STACK_LOCATION, *PIO_STACK_LOCATION;
-typedef struct _IRP { struct { NTSTATUS Status; } IoStatus; IO_STACK_LOCATION Stack; } IRP, *PIRP;
+typedef struct {
+    UCHAR MinorFunction;
+    union {
+        struct { PDEVICE_CAPABILITIES Capabilities; } DeviceCapabilities;
+        struct { ULONG SystemContext; POWER_STATE_TYPE Type; POWER_STATE State; } Power;
+    } Parameters;
+} IO_STACK_LOCATION, *PIO_STACK_LOCATION;
+typedef struct _IRP { struct { NTSTATUS Status; } IoStatus; BOOLEAN PendingReturned; IO_STACK_LOCATION Stack; } IRP, *PIRP;
 struct _DEVICE_OBJECT { PVOID DeviceExtension; ULONG Flags; };
 struct _DRIVER_EXTENSION { NTSTATUS (*AddDevice)(PDRIVER_OBJECT, PDEVICE_OBJECT); };
 struct _DRIVER_OBJECT { NTSTATUS (*MajorFunction[28])(PDEVICE_OBJECT, PIRP); struct _DRIVER_EXTENSION *DriverExtension; };
@@ -230,7 +255,17 @@ static PVOID MmMapIoSpaceEx(PHYSICAL_ADDRESS pa, size_t len, ULONG prot) {
     return NULL;
 }
 static void MmUnmapIoSpace(PVOID p, size_t len) { (void)p; (void)len; }
-#define READ_REGISTER_ULONG(p) (*(p))
+static void (*car_read_hook)(void) = NULL;
+static ULONG read_reg_ulong(PULONG p) {
+    ULONG v = *p;
+    if (car_read_hook && p == &car_words[0xe0 / 4]) {
+        void (*hook)(void) = car_read_hook;
+        car_read_hook = NULL;
+        hook();
+    }
+    return v;
+}
+#define READ_REGISTER_ULONG(p) read_reg_ulong(p)
 
 static NTSTATUS MockProcessorHalt(ULONG flags, PVOID param, PVOID fn) {
     assert(fn == NULL && param != NULL);
@@ -248,8 +283,8 @@ static NTSTATUS PoFxRegisterPlugin(PPEP_INFORMATION info, PPEP_KERNEL_INFORMATIO
 
 /* Unused PnP stubs for processor test */
 static void KeInitializeSpinLock(KSPIN_LOCK *l) { *l = 0; }
-static void KeAcquireSpinLock(KSPIN_LOCK *l, KIRQL *i) { (void)l; *i = 0; }
-static void KeReleaseSpinLock(KSPIN_LOCK *l, KIRQL i) { (void)l; (void)i; }
+static void KeAcquireSpinLock(KSPIN_LOCK *l, KIRQL *i) { assert(*l == 0); *l = 1; *i = cur_irql; cur_irql = DISPATCH_LEVEL; }
+static void KeReleaseSpinLock(KSPIN_LOCK *l, KIRQL i) { assert(*l == 1); *l = 0; cur_irql = i; }
 static void KeInitializeEvent(PKEVENT e, int t, BOOLEAN s) { (void)t; e->signaled = s; }
 static void KeClearEvent(PKEVENT e) { e->signaled = false; }
 static void KeSetEvent(PKEVENT e, int inc, BOOLEAN w) { (void)inc; (void)w; e->signaled = true; }
@@ -264,7 +299,10 @@ static void IoCopyCurrentIrpStackLocationToNext(PIRP i) { (void)i; }
 static void IoSkipCurrentIrpStackLocation(PIRP i) { (void)i; }
 static PIO_STACK_LOCATION IoGetCurrentIrpStackLocation(PIRP i) { return &i->Stack; }
 static void IoSetCompletionRoutine(PIRP i, PVOID r, PVOID c, BOOLEAN s, BOOLEAN e, BOOLEAN cn) { (void)i; (void)r; (void)c; (void)s; (void)e; (void)cn; }
+static void IoMarkIrpPending(PIRP i) { (void)i; }
+static void PoStartNextPowerIrp(PIRP i) { (void)i; }
 static NTSTATUS IoCallDriver(PDEVICE_OBJECT o, PIRP i) { (void)o; return i->IoStatus.Status; }
+static NTSTATUS PoCallDriver(PDEVICE_OBJECT o, PIRP i) { (void)o; return i->IoStatus.Status; }
 static void IoDetachDevice(PDEVICE_OBJECT o) { (void)o; }
 static void IoDeleteDevice(PDEVICE_OBJECT o) { (void)o; }
 static NTSTATUS IoCreateDevice(PDRIVER_OBJECT d, ULONG ext, PUNICODE_STRING n, ULONG t, ULONG ch, BOOLEAN ex, PDEVICE_OBJECT *out) { (void)d; (void)ext; (void)n; (void)t; (void)ch; (void)ex; *out = NULL; return STATUS_UNSUCCESSFUL; }
@@ -295,6 +333,19 @@ static PEPHANDLE reg_dev(PCWSTR path, POHANDLE kh, ULONG comp_count, const ULONG
 static void set_dstate(PEPHANDLE h, DEVICE_POWER_STATE s, BOOLEAN complete) {
     PEP_DEVICE_POWER_STATE p = { h, s, complete };
     assert(registered_pep.AcceptDeviceNotification(PEP_DPM_DEVICE_POWER_STATE, &p));
+}
+
+static PEPHANDLE hook_dev = NULL;
+static void hook_display_on_mid_car(void) {
+    ULONG on = 1;
+    DisplayChanged(&DisplayGuid, &on, 4, NULL);
+}
+static void hook_dev_wake_mid_car(void) {
+    set_dstate(hook_dev, PowerDeviceD0, FALSE);
+}
+static void hook_sys_enter_mid_car(void) {
+    PEP_PPM_ENTER_SYSTEM_STATE s = { PowerSystemHibernate };
+    assert(registered_pep.AcceptProcessorNotification(NULL, PEP_NOTIFY_PPM_ENTER_SYSTEM_STATE, &s));
 }
 
 int main(void) {
@@ -462,7 +513,150 @@ int main(void) {
     assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
     assert(exec.Status == STATUS_NOT_SUPPORTED && Sc7Failures == 1 && LastSc7Status == STATUS_NOT_SUPPORTED);
 
-    puts("PASS: Tegra214Power extended PSCI IDs (C7/CC6/SC7), CAR PLLX Pdiv gate, D3/F-state tracking, mid-wake downgrade and PSCI fault accounting");
+    /* 9. Busy-to-idle transitions: D1/incomplete D3, shallow F2->F1 wake, pre/post F2, optional peripheral + dump invariants. */
+    next_psci_status = STATUS_SUCCESS;
+    set_dstate(pwrb, PowerDeviceD1, FALSE);
+    assert(ComputeSc7BlockingMask() == (1u << 1));
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &test_s));
+    assert(test_s.VetoReason == VETO_SC7_DEVICES_BUSY);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(exec.Status == STATUS_SUCCESS && last_psci_state == 0x40000010u && Sc7Downgrades == 2);
+
+    set_dstate(pwrb, PowerDeviceD3, FALSE);
+    assert(ComputeSc7BlockingMask() == (1u << 1));
+    set_dstate(pwrb, PowerDeviceD3, TRUE);
+    assert(ComputeSc7BlockingMask() == 0u);
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &test_s));
+    assert(test_s.VetoReason == PEP_IDLE_VETO_NONE);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(exec.Status == STATUS_SUCCESS && last_psci_state == 0x4000001Bu);
+
+    /* Component shallow wake F2->F1 with DriverNotified=FALSE blocks immediately; F1->F2 needs DriverNotified=TRUE. */
+    comp_idle = (PEP_NOTIFY_COMPONENT_IDLE_STATE){ gpu0, 1, 1, FALSE, FALSE };
+    assert(registered_pep.AcceptDeviceNotification(PEP_DPM_NOTIFY_COMPONENT_IDLE_STATE, &comp_idle) && comp_idle.Completed);
+    assert(ComputeSc7BlockingMask() == (1u << 5));
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &test_s));
+    assert(test_s.VetoReason == VETO_SC7_DEVICES_BUSY);
+    comp_idle = (PEP_NOTIFY_COMPONENT_IDLE_STATE){ gpu0, 1, 2, FALSE, FALSE };
+    assert(registered_pep.AcceptDeviceNotification(PEP_DPM_NOTIFY_COMPONENT_IDLE_STATE, &comp_idle) && comp_idle.Completed);
+    assert(ComputeSc7BlockingMask() == (1u << 5));
+    comp_idle = (PEP_NOTIFY_COMPONENT_IDLE_STATE){ gpu0, 1, 2, TRUE, FALSE };
+    assert(registered_pep.AcceptDeviceNotification(PEP_DPM_NOTIFY_COMPONENT_IDLE_STATE, &comp_idle) && comp_idle.Completed);
+    assert(ComputeSc7BlockingMask() == 0u);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(exec.Status == STATUS_SUCCESS && last_psci_state == 0x4000001Bu);
+
+    /* Optional peripheral busy -> idle -> active -> unregistered + crashdump safety checks. */
+    PEPHANDLE bat0 = reg_dev(L"\\_SB.BAT0", (POHANDLE)0x8000, 0, NULL);
+    assert(ComputeSc7BlockingMask() == (1u << 8));
+    set_dstate(bat0, PowerDeviceD3, FALSE);
+    assert(ComputeSc7BlockingMask() == (1u << 8));
+    set_dstate(bat0, PowerDeviceD3, TRUE);
+    assert(ComputeSc7BlockingMask() == 0u);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(exec.Status == STATUS_SUCCESS && last_psci_state == 0x4000001Bu);
+    set_dstate(bat0, PowerDeviceD0, TRUE);
+    assert(ComputeSc7BlockingMask() == (1u << 8));
+    PEP_CRASHDUMP_INFORMATION bat_dump = { bat0, NULL };
+    assert(PowerOnCrashdumpDevice(&bat_dump) == TRUE);
+    assert(PowerOnCrashdumpDevice(NULL) == FALSE);
+    PEP_UNREGISTER_DEVICE unreg_bat0 = { bat0 };
+    assert(registered_pep.AcceptDeviceNotification(PEP_DPM_UNREGISTER_DEVICE, &unreg_bat0));
+    assert(ComputeSc7BlockingMask() == 0u);
+    assert(PowerOnCrashdumpDevice(&bat_dump) == FALSE);
+    PEP_REGISTER_CRASHDUMP_DEVICE unreg_cd = { bat0, NULL };
+    assert(registered_pep.AcceptDeviceNotification(PEP_DPM_REGISTER_CRASHDUMP_DEVICE, &unreg_cd) == FALSE);
+    PEP_DEVICE_POWER_STATE stale_p = { bat0, PowerDeviceD0, TRUE };
+    assert(registered_pep.AcceptDeviceNotification(PEP_DPM_DEVICE_POWER_STATE, &stale_p) == FALSE);
+    assert(PowerOnCrashdumpDevice(&bat_dump) == FALSE);
+
+    /* 10. System transition vetoes (ENTER_SYSTEM_STATE/RESUME_FROM_SYSTEM_STATE) block C7/CC6/SC7 while allowing WFI. */
+    PEP_PPM_QUERY_VETO_REASONS veto_cnt = {0};
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_QUERY_VETO_REASONS, &veto_cnt));
+    assert(veto_cnt.VetoReasonCount == VETO_COUNT);
+    WCHAR veto_buf[64] = {0};
+    PEP_PPM_QUERY_VETO_REASON veto_q = { VETO_SYSTEM_TRANSITION, 0, NULL };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_QUERY_VETO_REASON, &veto_q));
+    assert((size_t)veto_q.NameSize > sizeof(WCHAR) && (size_t)veto_q.NameSize <= sizeof(veto_buf));
+    veto_q.Name = veto_buf;
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_QUERY_VETO_REASON, &veto_q));
+    assert(veto_buf[0] != 0);
+
+    PEP_PPM_ENTER_SYSTEM_STATE enter_sys = { PowerSystemShutdown };
+    assert(registered_pep.AcceptProcessorNotification(NULL, PEP_NOTIFY_PPM_ENTER_SYSTEM_STATE, &enter_sys));
+    PEP_PPM_TEST_IDLE_STATE wfi_s = { IDLE_WFI, PEP_PLATFORM_IDLE_STATE_NONE, 99 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &wfi_s));
+    assert(wfi_s.VetoReason == PEP_IDLE_VETO_NONE);
+    PEP_PPM_TEST_IDLE_STATE c7_s = { IDLE_C7, PEP_PLATFORM_IDLE_STATE_NONE, 0 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &c7_s));
+    assert(c7_s.VetoReason == VETO_SYSTEM_TRANSITION);
+    PEP_PPM_TEST_IDLE_STATE cc6_s = { IDLE_CC6, PLAT_STATE_CC6, 0 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &cc6_s));
+    assert(cc6_s.VetoReason == VETO_SYSTEM_TRANSITION);
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &test_s));
+    assert(test_s.VetoReason == VETO_SYSTEM_TRANSITION);
+
+    unsigned psci_before = psci_calls, wfi_before = wfi_calls;
+    LONG sc7_att_before = Sc7Attempts, cc6_att_before = Cc6Attempts, sc7_dg_before = Sc7Downgrades;
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_C7, PEP_PLATFORM_IDLE_STATE_NONE, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec) && exec.Status == STATUS_SUCCESS);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_CC6, PLAT_STATE_CC6, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec) && exec.Status == STATUS_SUCCESS);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec) && exec.Status == STATUS_SUCCESS);
+    assert(psci_calls == psci_before && wfi_calls == wfi_before + 3);
+    assert(Sc7Attempts == sc7_att_before && Cc6Attempts == cc6_att_before && Sc7Downgrades == sc7_dg_before);
+
+    PEP_PPM_RESUME_FROM_SYSTEM_STATE resume_sys = { PowerSystemWorking };
+    assert(registered_pep.AcceptProcessorNotification(NULL, PEP_NOTIFY_PPM_RESUME_FROM_SYSTEM_STATE, &resume_sys));
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &test_s));
+    assert(test_s.VetoReason == PEP_IDLE_VETO_NONE);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(exec.Status == STATUS_SUCCESS && last_psci_state == 0x4000001Bu);
+
+    /* 11. Final SC7 admission re-samples coherent state after CAR MMIO read (display wake, peripheral wake, system transition, opt-out). */
+    psci_before = psci_calls; wfi_before = wfi_calls;
+    car_read_hook = hook_display_on_mid_car;
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec) && exec.Status == STATUS_SUCCESS);
+    assert(car_read_hook == NULL && psci_calls == psci_before && wfi_calls == wfi_before + 1);
+    disp = 0;
+    DisplayChanged(&DisplayGuid, &disp, 4, NULL);
+
+    hook_dev = i2c5;
+    sc7_dg_before = Sc7Downgrades;
+    car_read_hook = hook_dev_wake_mid_car;
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(car_read_hook == NULL && exec.Status == STATUS_SUCCESS && last_psci_state == 0x40000010u && Sc7Downgrades == sc7_dg_before + 1);
+    set_dstate(i2c5, PowerDeviceD3, TRUE);
+
+    psci_before = psci_calls; wfi_before = wfi_calls;
+    car_read_hook = hook_sys_enter_mid_car;
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec) && exec.Status == STATUS_SUCCESS);
+    assert(car_read_hook == NULL && psci_calls == psci_before && wfi_calls == wfi_before + 1);
+    assert(registered_pep.AcceptProcessorNotification(NULL, PEP_NOTIFY_PPM_RESUME_FROM_SYSTEM_STATE, &resume_sys));
+
+    /* Preserved opt-in guarantee: EnableSc7=0 vetoes/downgrades SC7 while keeping C7/CC6 functional. */
+    reg_enable_sc7 = 0;
+    RefreshEnableSc7FromRegistry();
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_TEST_IDLE_STATE, &test_s));
+    assert(test_s.VetoReason == VETO_SC7_DISABLED);
+    sc7_dg_before = Sc7Downgrades;
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_SC7, PLAT_STATE_SC7, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(exec.Status == STATUS_SUCCESS && last_psci_state == 0x40000010u && Sc7Downgrades == sc7_dg_before + 1);
+    exec = (PEP_PPM_IDLE_EXECUTE_V2){ IDLE_C7, PEP_PLATFORM_IDLE_STATE_NONE, -1 };
+    assert(registered_pep.AcceptProcessorNotification(cpu_h[0], PEP_NOTIFY_PPM_IDLE_EXECUTE, &exec));
+    assert(exec.Status == STATUS_SUCCESS && last_psci_state == 0x40000007u);
+
+    puts("PASS: Tegra214Power extended PSCI IDs (C7/CC6/SC7), CAR PLLX Pdiv gate, D3/F-state busy-to-idle tracking, system transition vetoes, coherent final admission and PSCI fault accounting");
     return 0;
 }
 '''
